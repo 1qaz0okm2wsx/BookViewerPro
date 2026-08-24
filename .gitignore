@@ -1,5 +1,25 @@
+# 依赖
 node_modules/
-.next/
+
+# 构建产物
 dist/
 build/
+.next/
+
+# 日志与环境
 *.log
+npm-debug.log*
+.env
+.env.local
+.env.*.local
+*.local
+
+# 编辑器与系统
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+Thumbs.db
+
+# 测试覆盖
+coverage/
