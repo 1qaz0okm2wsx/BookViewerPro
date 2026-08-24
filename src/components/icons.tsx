@@ -7,7 +7,8 @@ export type IconName =
   | "chevL" | "chevR" | "chevD" | "list" | "sun" | "moon" | "leaf" | "columns"
   | "rows" | "type" | "plus" | "minus" | "image" | "code" | "file" | "clock"
   | "select" | "square" | "circle" | "line" | "pencil" | "text" | "undo" | "save"
-  | "zip" | "alert" | "info" | "arrowR" | "grid" | "settings" | "spark" | "shield";
+  | "zip" | "alert" | "info" | "arrowR" | "grid" | "settings" | "spark" | "shield"
+  | "scan" | "chart" | "star" | "tag" | "play" | "pause" | "folder" | "map" | "gear";
 
 const P: Record<IconName, React.ReactNode> = {
   book: <><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" /><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" /></>,

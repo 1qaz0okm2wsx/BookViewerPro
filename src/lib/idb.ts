@@ -6,6 +6,7 @@ export const KEYS = {
   marks: "bv:marks",
   progress: "bv:progress",
   seeded: "bv:seeded",
+  stats: "bv:stats",
 };
 
 export const fileKey = (id: string) => `bv:file:${id}`;
