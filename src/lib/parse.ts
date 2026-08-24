@@ -390,8 +390,9 @@ async function parseMobi(buf: ArrayBuffer, fallbackTitle: string): Promise<{ tit
   const count = Math.min(textRecordCount || numRecords - 1, numRecords - 1);
   for (let i = 1; i <= count; i++) {
     const start = recOffset(i);
-    const len = Math.min(recOffset(i + 1) - start, 4096);
-    if (len <= 0) continue;
+    const end = recOffset(i + 1);
+    const len = Math.min(end > start ? end - start : 0, 4096, Math.max(0, buf.byteLength - start));
+    if (len <= 0 || start >= buf.byteLength) continue;
     let bytes: Uint8Array = new Uint8Array(buf, start, len);
     if (compression === 2) bytes = palmdocDecompress(bytes);
     parts.push(decoder.decode(bytes, { stream: true }));
