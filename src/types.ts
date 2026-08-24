@@ -2,7 +2,7 @@ export type BookFormat =
   | "epub" | "pdf" | "docx" | "html" | "svg" | "txt"
   | "md" | "cbz" | "mobi" | "fb2" | "image";
 
-export type View = "shelf" | "reader" | "convert" | "edit" | "notes" | "stats" | "ocr" | "export";
+export type View = "shelf" | "reader" | "convert" | "edit" | "notes" | "stats" | "ocr" | "ai" | "graph" | "export";
 
 export interface BookMeta {
   id: string;

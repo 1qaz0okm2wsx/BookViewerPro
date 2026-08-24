@@ -8,15 +8,23 @@ import ReaderView from "./components/Reader";
 import Converter from "./components/Converter";
 import Editor from "./components/Editor";
 import NotesPanel from "./components/NotesPanel";
+import StatsPanel from "./components/StatsPanel";
+import OcrPanel from "./components/OcrPanel";
+import AskPanel from "./components/AskPanel";
+import GraphPanel from "./components/GraphPanel";
 import ExportPanel from "./components/ExportPanel";
 import type { View } from "./types";
 
 const NAV: Array<{ key: View; label: string; icon: IconName; hint: string }> = [
-  { key: "shelf", label: "书架", icon: "library", hint: "导入与管理藏书" },
-  { key: "reader", label: "阅读", icon: "bookOpen", hint: "分页 · 搜索 · 批注" },
+  { key: "shelf", label: "书架", icon: "library", hint: "书库 · 标签 · 检索" },
+  { key: "reader", label: "阅读", icon: "bookOpen", hint: "批注 · 自动滚动" },
   { key: "convert", label: "转换", icon: "swap", hint: "格式互转" },
-  { key: "edit", label: "编辑", icon: "pen", hint: "富文本 · HTML · SVG" },
+  { key: "edit", label: "编辑", icon: "pen", hint: "富文本 · SVG" },
   { key: "notes", label: "笔记", icon: "note", hint: "批注与书签" },
+  { key: "stats", label: "统计", icon: "chart", hint: "热力图 · 快捷键" },
+  { key: "ocr", label: "识字", icon: "scan", hint: "扫描版 OCR" },
+  { key: "ai", label: "AI 助手", icon: "brain", hint: "问答 · 翻译 · 排版" },
+  { key: "graph", label: "图谱", icon: "network", hint: "知识网络 · 脑图" },
   { key: "export", label: "导出", icon: "box", hint: "打包为 ZIP" },
 ];
 
@@ -49,18 +57,8 @@ class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { err
               {this.state.error.stack?.slice(0, 600) ?? ""}
             </pre>
             <div className="flex gap-2 mt-5">
-              <button
-                onClick={() => window.location.reload()}
-                className="px-4 py-2 rounded-md bg-[#c6431f] text-white text-sm font-bold cursor-pointer hover:bg-[#a2320f] transition-colors"
-              >
-                重新加载
-              </button>
-              <button
-                onClick={() => this.setState({ error: null })}
-                className="px-4 py-2 rounded-md border border-[#ded9ca] text-sm cursor-pointer hover:bg-[#f1efe8] transition-colors"
-              >
-                尝试继续
-              </button>
+              <button onClick={() => window.location.reload()} className="px-4 py-2 rounded-md bg-[#c6431f] text-white text-sm font-bold cursor-pointer hover:bg-[#a2320f] transition-colors">重新加载</button>
+              <button onClick={() => this.setState({ error: null })} className="px-4 py-2 rounded-md border border-[#ded9ca] text-sm cursor-pointer hover:bg-[#f1efe8] transition-colors">尝试继续</button>
             </div>
           </div>
         </div>
@@ -93,19 +91,18 @@ function Shell() {
   return (
     <div className="h-full flex overflow-hidden">
       {/* ===== 侧栏 ===== */}
-      <aside className="sidebar-bg w-[68px] md:w-[228px] shrink-0 flex flex-col text-[#f1efe8]/85 border-r border-black/30">
-        <button className="flex items-center gap-3 px-4 md:px-6 pt-6 pb-5 text-left cursor-pointer group" onClick={() => app.setView("shelf")}>
-          <span className="w-10 h-10 rounded-lg bg-gradient-to-br from-gold to-[#a87f2a] text-pine flex items-center justify-center shrink-0 shadow-[0_4px_14px_-4px_rgba(200,155,60,.7)] transition-transform group-hover:-rotate-6">
-            <Icon name="book" size={20} strokeWidth={2} />
+      <aside className="sidebar-bg w-[64px] md:w-[216px] shrink-0 flex flex-col text-[#f1efe8]/85 border-r border-black/30">
+        <button className="flex items-center gap-2.5 px-3.5 md:px-5 pt-5 pb-4 text-left cursor-pointer group" onClick={() => app.setView("shelf")}>
+          <span className="w-9 h-9 rounded-lg bg-gradient-to-br from-gold to-[#a87f2a] text-pine flex items-center justify-center shrink-0 shadow-[0_4px_14px_-4px_rgba(200,155,60,.7)] transition-transform group-hover:-rotate-6">
+            <Icon name="book" size={18} strokeWidth={2} />
           </span>
           <span className="hidden md:block min-w-0">
-            <span className="text-[26px] leading-none text-gold-soft block" style={{ fontFamily: '"Ma Shan Zheng", "Noto Serif SC", cursive' }}>墨阁</span>
-            <span className="text-[9px] tracking-[0.32em] text-[#f1efe8]/40 uppercase block mt-1">BookViewer Pro</span>
+            <span className="text-[24px] leading-none text-gold-soft block" style={{ fontFamily: '"Ma Shan Zheng", "Noto Serif SC", cursive' }}>墨阁</span>
+            <span className="text-[8px] tracking-[0.3em] text-[#f1efe8]/40 uppercase block mt-1">BookViewer Pro</span>
           </span>
         </button>
 
-        <p className="hidden md:block text-[10px] tracking-[0.25em] text-[#f1efe8]/30 uppercase px-6 mb-2">工作台</p>
-        <nav className="flex-1 px-2.5 md:px-3.5 space-y-1">
+        <nav className="flex-1 px-2 md:px-3 space-y-0.5 overflow-y-auto">
           {NAV.map((n) => {
             const active = app.view === n.key;
             const count = badge(n.key);
@@ -114,15 +111,15 @@ function Shell() {
                 key={n.key}
                 onClick={() => app.setView(n.key)}
                 title={`${n.label} · ${n.hint}`}
-                className={`relative w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-all duration-150 cursor-pointer ${
+                className={`relative w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-sm transition-all duration-150 cursor-pointer ${
                   active ? "bg-white/[0.09] text-white" : "text-[#f1efe8]/60 hover:text-[#f1efe8] hover:bg-white/[0.05] hover:translate-x-0.5"
                 }`}
               >
-                {active && <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-6 rounded-r bg-verm" />}
-                <Icon name={n.icon} size={18} className={active ? "text-gold" : ""} />
+                {active && <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-5 rounded-r bg-verm" />}
+                <Icon name={n.icon} size={17} className={active ? "text-gold" : ""} />
                 <span className="hidden md:block flex-1 text-left">
-                  <span className={`block font-bold leading-tight ${active ? "" : "font-medium"}`}>{n.label}</span>
-                  <span className="block text-[10px] text-[#f1efe8]/35 leading-tight mt-0.5">{n.hint}</span>
+                  <span className={`block text-[13px] font-bold leading-tight ${active ? "" : "font-medium"}`}>{n.label}</span>
+                  <span className="block text-[9px] text-[#f1efe8]/35 leading-tight mt-px">{n.hint}</span>
                 </span>
                 {count > 0 && (
                   <span className={`hidden md:inline-flex text-[10px] font-bold px-1.5 py-0.5 rounded-full tabular-nums ${active ? "bg-verm text-white" : "bg-white/10 text-[#f1efe8]/60"}`}>
@@ -134,7 +131,7 @@ function Shell() {
           })}
         </nav>
 
-        <div className="px-4 md:px-5 pb-5 pt-3 space-y-2.5">
+        <div className="px-3.5 md:px-4 pb-4 pt-2.5 space-y-2">
           <div className="hidden md:flex items-center justify-between text-[11px] text-[#f1efe8]/45">
             <span className="flex items-center gap-1.5"><Icon name="book" size={12} /> 藏书 <strong className="text-[#f1efe8]/80 tabular-nums">{app.books.length}</strong></span>
             <span className="flex items-center gap-1.5"><Icon name="note" size={12} /> 笔记 <strong className="text-[#f1efe8]/80 tabular-nums">{app.annotations.length}</strong></span>
@@ -156,6 +153,10 @@ function Shell() {
           {app.view === "convert" && <Converter />}
           {app.view === "edit" && <Editor />}
           {app.view === "notes" && <NotesPanel />}
+          {app.view === "stats" && <StatsPanel />}
+          {app.view === "ocr" && <OcrPanel />}
+          {app.view === "ai" && <AskPanel />}
+          {app.view === "graph" && <GraphPanel />}
           {app.view === "export" && <ExportPanel />}
         </div>
       </main>

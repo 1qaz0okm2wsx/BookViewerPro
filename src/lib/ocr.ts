@@ -4,18 +4,20 @@ import { loadJSON, saveJSON } from "./idb";
 import type { OcrPageResult, OcrWord } from "../types";
 
 let workerPromise: Promise<Worker> | null = null;
+let activeStatusFn: OcrStatusFn | undefined;
 
 export type OcrStatusFn = (m: { status: string; progress: number }) => void;
 
 /**
  * tesseract.js 单例 Worker。
  * 语言包（chi_sim + eng）首次使用时由 tesseract.js 自动下载并缓存于浏览器，
- * 之后可离线使用。
+ * 之后可离线使用。进度回调通过可变引用转发，支持每次识别独立上报。
  */
 export function getOcrWorker(onStatus?: OcrStatusFn): Promise<Worker> {
+  if (onStatus) activeStatusFn = onStatus;
   if (!workerPromise) {
     workerPromise = createWorker(["chi_sim", "eng"], 1, {
-      logger: (m: { status: string; progress: number }) => onStatus?.(m),
+      logger: (m: { status: string; progress: number }) => activeStatusFn?.(m),
     }).catch((e) => {
       workerPromise = null;
       throw e;

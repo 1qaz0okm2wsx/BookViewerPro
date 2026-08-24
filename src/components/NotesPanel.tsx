@@ -1,5 +1,7 @@
 import React, { useMemo, useState } from "react";
+import { saveAs } from "file-saver";
 import { useApp } from "../store";
+import { notesToOpml, notesToMindmapHtml } from "../lib/mindmap";
 import { Icon } from "./icons";
 import { Btn, EmptyState, Modal, ViewHeader } from "./ui";
 import type { Annotation, NoteType } from "../types";
@@ -56,6 +58,30 @@ export default function NotesPanel() {
           kicker="Annotations · 笔记"
           title="笔记与批注"
           desc="阅读时选中文字留下的每一条痕迹都汇总在这里，可筛选、检索、回跳原文，并随书籍一键导出。"
+          right={
+            app.annotations.length > 0 ? (
+              <div className="flex gap-2">
+                <Btn
+                  variant="ghost" size="sm"
+                  onClick={() => {
+                    const book = bookId !== "all" ? app.books.find((b) => b.id === bookId) : undefined;
+                    const list = bookId === "all" ? app.annotations : app.annotations.filter((n) => n.bookId === bookId);
+                    saveAs(new Blob([notesToOpml(book?.title ?? "我的读书笔记", list)], { type: "text/x-opml;charset=utf-8" }), "读书笔记.opml");
+                    app.toast("已导出 OPML（可导入幕布 / XMind / Logseq）");
+                  }}
+                ><Icon name="download" size={13} /> OPML</Btn>
+                <Btn
+                  variant="ghost" size="sm"
+                  onClick={() => {
+                    const book = bookId !== "all" ? app.books.find((b) => b.id === bookId) : undefined;
+                    const list = bookId === "all" ? app.annotations : app.annotations.filter((n) => n.bookId === bookId);
+                    saveAs(new Blob([notesToMindmapHtml(book?.title ?? "我的读书笔记", list)], { type: "text/html;charset=utf-8" }), "读书笔记_思维导图.html");
+                    app.toast("已导出离线思维导图 HTML");
+                  }}
+                ><Icon name="map" size={13} /> 思维导图</Btn>
+              </div>
+            ) : undefined
+          }
         />
 
         <div className="flex items-center gap-3 flex-wrap mb-7 anim-fadeUp">

@@ -6,8 +6,8 @@ import { selectionToOffsets, wrapRange, unwrapAll } from "../lib/domrange";
 import { Icon } from "./icons";
 import type { IconName } from "./icons";
 import { Btn, Spinner } from "./ui";
-import { FORMAT_LABEL, fmtSize } from "../types";
-import type { Annotation, NoteType, ParsedBook } from "../types";
+import { FORMAT_LABEL, fmtSize, normKey } from "../types";
+import type { Annotation, NoteType, ParsedBook, OcrBookMap } from "../types";
 
 const ANN_COLORS: Array<{ c: string; label: string }> = [
   { c: "#f5d67b", label: "金" },
@@ -62,6 +62,12 @@ export default function ReaderView() {
   const [imgIdx, setImgIdx] = useState(0);
   const [imgUrl, setImgUrl] = useState("");
 
+  const [autoScroll, setAutoScroll] = useState(false);
+  const [autoSpeed, setAutoSpeed] = useState(3);
+  const [pdfCanvasH, setPdfCanvasH] = useState(0);
+  const [ocrMap, setOcrMap] = useState<OcrBookMap>({});
+  const [customCss, setCustomCss] = useState<string>(() => localStorage.getItem("bv.customcss") ?? "");
+
   const shellRef = useRef<HTMLDivElement>(null);
   const areaRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -101,6 +107,7 @@ export default function ReaderView() {
           restoreRef.current = { percent: prev.percent, page: prev.page };
           if (p.kind === "chapters") setChapterIdx(Math.min(prev.chapterIndex, p.chapters.length - 1));
           if (p.kind === "pdf" && prev.page !== undefined) setPage(prev.page);
+          if (p.kind === "pdf") app.getOcr(book.id).then((m) => setOcrMap(m));
         }
       } catch (e) {
         if (!cancelled) setError(e instanceof Error ? e.message : "打开失败");
@@ -249,6 +256,7 @@ export default function ReaderView() {
         const ctx = canvas.getContext("2d");
         if (!ctx) return;
         await pg.render({ canvasContext: ctx, viewport: vp } as unknown).promise;
+        setPdfCanvasH(canvas.getBoundingClientRect().height);
       } catch (e) {
         if (!cancelled) console.warn("PDF 页面渲染失败", e);
       }
@@ -267,13 +275,37 @@ export default function ReaderView() {
     }
   }, [parsed, imgIdx, book]);
 
-  /* ---------- 键盘翻页 ---------- */
+  /* ---------- 键盘快捷键（可在「统计」页自定义映射） ---------- */
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement | null;
       if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
-      if (e.key === "ArrowRight" || e.key === "PageDown") { e.preventDefault(); goNext(); }
-      else if (e.key === "ArrowLeft" || e.key === "PageUp") { e.preventDefault(); goPrev(); }
+      if (e.key === "PageDown") { e.preventDefault(); goNext(); return; }
+      if (e.key === "PageUp") { e.preventDefault(); goPrev(); return; }
+      const k = normKey(e);
+      const kb = app.keybindings;
+      if (k === kb.next) { e.preventDefault(); goNext(); }
+      else if (k === kb.prev) { e.preventDefault(); goPrev(); }
+      else if (k === kb.zoomIn) { e.preventDefault(); setZoom((z) => Math.min(2, +(z + 0.15).toFixed(2))); }
+      else if (k === kb.zoomOut) { e.preventDefault(); setZoom((z) => Math.max(0.5, +(z - 0.15).toFixed(2))); }
+      else if (k === kb.bookmark) { e.preventDefault(); toggleBookmark(); }
+      else if (k === kb.search) { e.preventDefault(); setSearch((s) => ({ ...s, open: !s.open })); }
+      else if (k === kb.autoscroll) { e.preventDefault(); setAutoScroll((v) => !v); }
+      else if (k === kb.highlight) {
+        const root = articleElRef.current;
+        const off = root ? selectionToOffsets(root) : null;
+        if (off && book && chapter) {
+          e.preventDefault();
+          app.addAnnotation({
+            bookId: book.id, chapterId: chapter.id, chapterTitle: chapter.title,
+            type: "highlight", color: ANN_COLORS[0].c, text: off.text, note: "",
+            start: off.start, end: off.end,
+          });
+          setAnnVersion((v) => v + 1);
+          window.getSelection()?.removeAllRanges();
+          app.toast("已高亮选中文字");
+        }
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -501,6 +533,85 @@ export default function ReaderView() {
     return () => document.removeEventListener("fullscreenchange", onFs);
   }, []);
 
+  /* ---------- 阅读统计心跳（每 5 秒记一次在线时长） ---------- */
+  useEffect(() => {
+    if (!book || !parsed || loading || error) return;
+    const t = window.setInterval(() => {
+      if (document.visibilityState === "visible") app.addReadingTick(5, 0);
+    }, 5000);
+    return () => window.clearInterval(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [book?.id, parsed, loading, error]);
+
+  const firstTurn = useRef(true);
+  useEffect(() => {
+    if (!parsed) return;
+    if (firstTurn.current) { firstTurn.current = false; return; }
+    app.addReadingTick(0, 1);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [page, chapterIdx, imgIdx]);
+
+  /* ---------- 自动滚动 ---------- */
+  useEffect(() => {
+    if (!autoScroll || !parsed) return;
+    const sc = scrollRef.current;
+    const vertical = (parsed.kind === "chapters" && mode === "scroll") || parsed.kind === "pdf";
+    if (vertical && sc) {
+      let raf = 0;
+      let last = performance.now();
+      const step = (now: number) => {
+        const dt = (now - last) / 1000;
+        last = now;
+        sc.scrollTop += autoSpeed * 30 * dt;
+        if (sc.scrollTop >= sc.scrollHeight - sc.clientHeight - 2) {
+          setAutoScroll(false);
+          app.toast("已到底部，自动滚动停止", "info");
+          return;
+        }
+        raf = requestAnimationFrame(step);
+      };
+      raf = requestAnimationFrame(step);
+      return () => cancelAnimationFrame(raf);
+    }
+    const ms = Math.max(1500, 9000 - autoSpeed * 850);
+    const t = window.setInterval(() => {
+      if (parsed.kind === "chapters" && mode === "page") {
+        if (page < pageCount - 1) goToPage(page + 1);
+        else if (chapterIdx < parsed.chapters.length - 1) { setChapterIdx(chapterIdx + 1); setPage(0); }
+        else setAutoScroll(false);
+      } else if (parsed.kind === "image" && parsed.format === "cbz") {
+        setImgIdx((i) => {
+          if (i >= parsed.imageCount - 1) { setAutoScroll(false); return i; }
+          return i + 1;
+        });
+      }
+    }, ms);
+    return () => window.clearInterval(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoScroll, autoSpeed, parsed, mode, page, pageCount, chapterIdx, imgIdx]);
+
+  /* 滚轮 / 触摸 / 点击即暂停自动滚动 */
+  useEffect(() => {
+    if (!autoScroll) return;
+    const pause = () => setAutoScroll(false);
+    const el = areaRef.current;
+    el?.addEventListener("wheel", pause, { passive: true });
+    el?.addEventListener("touchstart", pause, { passive: true });
+    el?.addEventListener("pointerdown", pause);
+    return () => {
+      el?.removeEventListener("wheel", pause);
+      el?.removeEventListener("touchstart", pause);
+      el?.removeEventListener("pointerdown", pause);
+    };
+  }, [autoScroll]);
+
+  /* ---------- AI 排版引擎注入的自定义样式 ---------- */
+  useEffect(() => {
+    const onCss = () => setCustomCss(localStorage.getItem("bv.customcss") ?? "");
+    window.addEventListener("bv:customcss", onCss);
+    return () => window.removeEventListener("bv:customcss", onCss);
+  }, []);
+
   const searchStep = (dir: 1 | -1) => {
     const root = scrollRef.current;
     if (!root) return;
@@ -635,6 +746,14 @@ export default function ReaderView() {
           <Icon name="bookmark" size={17} className={isMarked ? "fill-current" : ""} />
         </button>
 
+        <button
+          onClick={() => setAutoScroll((v) => !v)}
+          title={autoScroll ? "停止自动滚动" : "自动滚动（解放双手）"}
+          className={`p-2 rounded-md transition-all cursor-pointer ${autoScroll ? "bg-gold text-pine" : "hover:bg-white/10"}`}
+        >
+          <Icon name={autoScroll ? "pause" : "play"} size={17} />
+        </button>
+
         <div className="relative">
           <button
             onClick={() => setFsOpen((v) => !v)}
@@ -697,6 +816,17 @@ export default function ReaderView() {
         onMouseUp={onAreaMouseUp}
         onMouseDown={() => { setPopover(null); }}
       >
+        {customCss ? <style>{customCss}</style> : null}
+
+        {autoScroll && (
+          <div className="absolute bottom-5 left-1/2 -translate-x-1/2 z-40 bg-pine text-paper rounded-full shadow-2xl border border-white/10 pl-4 pr-1.5 py-1.5 flex items-center gap-2 anim-pop">
+            <span className="flex items-center gap-1.5 text-xs font-bold"><Icon name="rows" size={13} className="text-gold" /> 自动阅读中</span>
+            <button onClick={() => setAutoSpeed((s) => Math.max(1, s - 1))} className="p-1 rounded-full hover:bg-white/10 cursor-pointer" title="减速"><Icon name="minus" size={12} /></button>
+            <span className="text-[11px] tabular-nums text-paper/70 w-4 text-center">{autoSpeed}</span>
+            <button onClick={() => setAutoSpeed((s) => Math.min(9, s + 1))} className="p-1 rounded-full hover:bg-white/10 cursor-pointer" title="加速"><Icon name="plus" size={12} /></button>
+            <button onClick={() => setAutoScroll(false)} className="ml-1 px-2.5 py-1 rounded-full bg-verm text-white text-[11px] font-bold hover:bg-verm-deep transition-colors cursor-pointer">停止</button>
+          </div>
+        )}
         {parsed.kind === "chapters" && chapter && mode === "page" && (
           <div ref={scrollRef} onScroll={onPagedScroll} className="h-full overflow-x-auto overflow-y-hidden" style={{ scrollSnapType: "x mandatory" }}>
             <div
@@ -734,7 +864,31 @@ export default function ReaderView() {
         {parsed.kind === "pdf" && (
           <div ref={scrollRef} onScroll={onPdfScroll} className="h-full overflow-y-auto" style={{ background: "color-mix(in srgb, var(--rv-bg) 92%, #000)" }}>
             <div className="flex flex-col items-center gap-6 py-8 px-4 min-h-full">
-              <canvas ref={canvasRef} className="rounded-[3px] shadow-[0_16px_48px_-16px_rgba(0,0,0,0.55)] bg-white" style={{ width: `${Math.round(760 * zoom)}px`, maxWidth: "96%" }} />
+              <div className="relative inline-block max-w-[96%]">
+                <canvas ref={canvasRef} className="rounded-[3px] shadow-[0_16px_48px_-16px_rgba(0,0,0,0.55)] bg-white" style={{ width: `${Math.round(760 * zoom)}px`, maxWidth: "100%" }} />
+                {ocrMap[String(page)] && pdfCanvasH > 0 && (
+                  <div className="absolute inset-0 select-text" style={{ cursor: "text" }} title="OCR 文字层：可选中复制">
+                    {ocrMap[String(page)].words.map((w, i) => {
+                      const pg = ocrMap[String(page)];
+                      return (
+                        <span
+                          key={i}
+                          className="absolute text-transparent"
+                          style={{
+                            left: `${(w.x / pg.width) * 100}%`,
+                            top: `${(w.y / pg.height) * 100}%`,
+                            width: `${(w.w / pg.width) * 100}%`,
+                            height: `${(w.h / pg.height) * 100}%`,
+                            fontSize: `${(w.h / pg.height) * pdfCanvasH * 0.82}px`,
+                            lineHeight: 1,
+                            whiteSpace: "nowrap",
+                          }}
+                        >{w.text}</span>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
               {pdfInfo && page < pdfInfo.pages - 1 && (
                 <button onClick={() => goToPage(page + 1)} className="px-4 py-2 rounded-md text-xs font-bold bg-pine text-paper hover:bg-pine-2 transition-colors cursor-pointer shadow-lg">
                   加载第 {page + 2} 页 ↓
