@@ -5,6 +5,7 @@ cd /d %~dp0
 
 echo ====================================================
 echo    墨阁 BookViewer Pro —— 一键推送到 GitHub
+echo    （每次上传自动打版：补丁版本 +0.0.1）
 echo ====================================================
 echo.
 
@@ -13,6 +14,15 @@ if errorlevel 1 (
   echo [错误] 未检测到 Git。
   echo        请到 https://git-scm.com/download/win 下载安装，
   echo        安装完成后重新双击本脚本。
+  echo.
+  pause
+  exit /b 1
+)
+
+node --version >nul 2>&1
+if errorlevel 1 (
+  echo [错误] 未检测到 Node.js（打版脚本需要）。
+  echo        请到 https://nodejs.org 安装 LTS 版本后重试。
   echo.
   pause
   exit /b 1
@@ -37,23 +47,35 @@ if "%REPO%"=="" (
 )
 
 echo.
-echo [1/5] 初始化本地仓库…
+echo [1/6] 初始化本地仓库…
 if not exist .git git init -q
 git branch -M main
 
-echo [2/5] 登记项目文件…
+:: 判断是否已有提交：有 → 打版 +0.0.1；没有 → 首推，使用当前版本
+git rev-parse --verify HEAD >nul 2>&1
+if errorlevel 1 (
+  echo [2/6] 首次推送，使用当前版本…
+) else (
+  echo [2/6] 自动打版（补丁版本 +0.0.1）…
+  node scripts\bump-version.mjs
+)
+for /f "delims=" %%v in ('node -e "const s=require('fs').readFileSync('src/version.ts','utf8');console.log(/\"(\d+\.\d+\.\d+)\"/.exec(s)[1])"') do set "V=%%v"
+echo       本次版本：v%V%
+
+echo [3/6] 登记项目文件…
 git add .
 
-echo [3/5] 创建提交…
-git commit -m "feat: 墨阁 BookViewer Pro —— 阅读/转换/编辑/批注/导出" >nul 2>&1
+echo [4/6] 创建提交…
+git commit -m "release: v%V% · 墨阁 BookViewer Pro" >nul 2>&1
 
-echo [4/5] 关联远程仓库…
+echo [5/6] 关联远程仓库并打标签 v%V% …
 git remote remove origin >nul 2>&1
 git remote add origin %REPO%
+git tag -f -a "v%V%" -m "release: v%V%" >nul 2>&1
 
-echo [5/5] 推送中（首次会弹出浏览器，请完成 GitHub 授权登录）…
+echo [6/6] 推送中（首次会弹出浏览器，请完成 GitHub 授权登录）…
 echo.
-git push -u origin main
+git push -u origin main --tags
 
 if errorlevel 1 (
   echo.
@@ -67,7 +89,7 @@ if errorlevel 1 (
 ) else (
   echo.
   echo ====================================================
-  echo  [完成] 推送成功！打开你的仓库即可查看项目主页。
+  echo  [完成] v%V% 推送成功！打开你的仓库即可查看项目主页。
   echo  提示：在仓库 Settings → Pages → Source 选择
   echo       "GitHub Actions"，约两分钟后自动获得在线演示站。
   echo ====================================================

@@ -1,5 +1,6 @@
 import React from "react";
 import { AppProvider, useApp } from "./store";
+import { APP_VERSION } from "./version";
 import { Icon } from "./components/icons";
 import type { IconName } from "./components/icons";
 import { Spinner } from "./components/ui";
@@ -141,7 +142,16 @@ function Shell() {
             <Icon name="shield" size={11} className="shrink-0" />
             纯本地运行 · 数据不出此设备
           </p>
-          <p className="md:hidden flex justify-center text-[#f1efe8]/30"><Icon name="shield" size={13} /></p>
+          <div className="hidden md:flex items-center justify-between text-[9px] text-[#f1efe8]/40 mt-1.5">
+            <span className="font-mono tracking-[0.18em] px-2 py-1 rounded-md border border-gold/25 bg-gold/[0.07] text-gold-soft transition-colors hover:border-gold/60">
+              v{APP_VERSION}
+            </span>
+            <span className="text-[#f1efe8]/30">每次推送自动 +0.0.1</span>
+          </div>
+          <p className="md:hidden flex items-center justify-center gap-2 text-[#f1efe8]/30">
+            <Icon name="shield" size={13} />
+            <span className="font-mono text-[9px] tracking-widest">v{APP_VERSION}</span>
+          </p>
         </div>
       </aside>
 
