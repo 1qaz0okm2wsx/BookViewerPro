@@ -2,8 +2,9 @@
 import React, { useState } from "react";
 import { useApp } from "../store";
 import { parseBook } from "../lib/parse";
-import { buildIndex, searchIndex, embedQuery, type SearchIndex, type Chunk } from "../ai/rag";
+import { buildIndex, loadIndex, saveIndex, searchIndex, embedQuery, type SearchIndex, type Chunk } from "../ai/rag";
 import { loadLlmSettings, saveLlmSettings, testConnection, chat, type LlmSettings } from "../ai/llm";
+import { AI_PROVIDERS } from "../config/api-config";
 import { styleFromPrompt, STYLE_PRESETS } from "../ai/styleEngine";
 import BilingualView from "../translation/BilingualView";
 import { Icon } from "./icons";
@@ -53,18 +54,29 @@ function AskTab() {
     }
   };
 
-  const buildIdx = async () => {
+  const buildIdx = async (force = false) => {
     if (!book || !parsed || indexing) return;
     setIndexing(true);
     try {
+      // 先尝试从该书数据库的 embeddings 表读取已有向量
+      if (!force) {
+        const cached = await loadIndex(book.id, parsed);
+        if (cached) {
+          setIndex(cached);
+          setStage(`已从数据库载入向量索引（${cached.chunks.length} 段）`);
+          app.toast("已载入该书的持久化向量索引");
+          return;
+        }
+      }
       const idx = await buildIndex(book.id, parsed, setStage);
       setIndex(idx);
-      app.toast(idx.mode === "vector" ? "向量索引构建完成" : "已建立本地关键词索引", idx.mode === "vector" ? "success" : "info");
+      if (idx.mode === "vector") await saveIndex(book.id, idx);
+      app.toast(idx.mode === "vector" ? "向量索引构建完成并已存入该书数据库" : "已建立本地关键词索引", idx.mode === "vector" ? "success" : "info");
     } catch (e) {
       app.toast(e instanceof Error ? e.message : "索引失败", "error");
     } finally {
       setIndexing(false);
-      setStage("");
+      window.setTimeout(() => setStage(""), 1500);
     }
   };
 
@@ -133,17 +145,18 @@ function AskTab() {
           {showCfg && (
             <div className="px-3.5 pb-3.5 space-y-2 anim-fadeIn">
               <div className="flex gap-1.5">
-                {(["ollama", "openai"] as const).map((p) => (
-                  <button key={p} onClick={() => setCfg((c) => ({ ...c, provider: p, baseUrl: p === "ollama" ? "http://localhost:11434" : "https://api.openai.com/v1" }))}
+                {(["zhipu", "ollama", "openai"] as const).map((p) => (
+                  <button key={p} onClick={() => setCfg((c) => ({ ...c, provider: p, baseUrl: AI_PROVIDERS[p].baseUrl, model: AI_PROVIDERS[p].model }))}
                     className={`flex-1 px-2 py-1.5 rounded-md text-[11px] font-bold border transition-all cursor-pointer ${cfg.provider === p ? "bg-pine text-paper border-pine" : "border-line hover:border-ink/40"}`}>
-                    {p === "ollama" ? "本地 Ollama" : "OpenAI 兼容"}
+                    {p === "zhipu" ? "智谱 AI" : p === "ollama" ? "Ollama" : "OpenAI"}
                   </button>
                 ))}
               </div>
+              <p className="text-[10px] text-mist leading-relaxed">{AI_PROVIDERS[cfg.provider].hint}</p>
               <input value={cfg.baseUrl} onChange={(e) => setCfg((c) => ({ ...c, baseUrl: e.target.value }))} placeholder="Base URL" className="w-full bg-paper border border-line rounded-md px-2.5 py-1.5 text-[11px] outline-none focus:border-verm" />
-              <input value={cfg.model} onChange={(e) => setCfg((c) => ({ ...c, model: e.target.value }))} placeholder="模型名（如 qwen2.5）" className="w-full bg-paper border border-line rounded-md px-2.5 py-1.5 text-[11px] outline-none focus:border-verm" />
-              {cfg.provider === "openai" && (
-                <input type="password" value={cfg.apiKey} onChange={(e) => setCfg((c) => ({ ...c, apiKey: e.target.value }))} placeholder="API Key（仅存本地）" className="w-full bg-paper border border-line rounded-md px-2.5 py-1.5 text-[11px] outline-none focus:border-verm" />
+              <input value={cfg.model} onChange={(e) => setCfg((c) => ({ ...c, model: e.target.value }))} placeholder="模型名" className="w-full bg-paper border border-line rounded-md px-2.5 py-1.5 text-[11px] outline-none focus:border-verm" />
+              {cfg.provider !== "ollama" && (
+                <input type="password" value={cfg.apiKey} onChange={(e) => setCfg((c) => ({ ...c, apiKey: e.target.value }))} placeholder="API Key（仅存本机 localStorage，不上传）" className="w-full bg-paper border border-line rounded-md px-2.5 py-1.5 text-[11px] outline-none focus:border-verm" />
               )}
               <div className="flex gap-1.5">
                 <Btn size="sm" variant="ghost" className="flex-1" onClick={() => { saveLlmSettings(cfg); app.toast("模型配置已保存（仅存本机）"); }}>保存</Btn>

@@ -183,8 +183,9 @@ export default function Bookshelf() {
 
         {/* 书架 */}
         {app.books.length === 0 ? (
-          <EmptyState icon="library" title="书架空空如也" desc="点击「导入书籍」选择文件，或「扫描文件夹」批量导入整个目录；也可以直接把文件拖进这个窗口。">
-            <div className="flex gap-2">
+          <EmptyState icon="library" title="书架空空如也" desc="导入你自己的书籍，或先下载一本内置的公有领域示例书体验全部功能（阅读、批注、AI 问答、图谱）。数据只存在你本机。">
+            <div className="flex gap-2 flex-wrap justify-center">
+              <Btn variant="gold" onClick={() => app.downloadSample("mao")}><Icon name="download" size={15} /> 下载示例《毛泽东选集 · 老三篇》</Btn>
               <Btn onClick={() => fileRef.current?.click()}><Icon name="upload" size={15} /> 导入书籍</Btn>
               <Btn variant="ghost" onClick={() => dirRef.current?.click()}><Icon name="folder" size={15} /> 扫描文件夹</Btn>
             </div>

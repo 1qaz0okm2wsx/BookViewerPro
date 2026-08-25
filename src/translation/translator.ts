@@ -1,6 +1,6 @@
-/** 上下文翻译：LLM 优先（Ollama / OpenAI 兼容），MyMemory 免费接口兜底；段落级 IndexedDB 缓存 */
-import { get, set } from "idb-keyval";
+/** 上下文翻译：LLM 优先（智谱 / Ollama / OpenAI），MyMemory 兜底；译文按书存入 translations 表 */
 import { chat, detectLang, loadLlmSettings, type LlmSettings } from "../ai/llm";
+import { loadBookStore, saveBookStore } from "../db/BookDB";
 
 function hash(s: string): string {
   let h = 5381;
@@ -8,7 +8,8 @@ function hash(s: string): string {
   return h.toString(36);
 }
 
-const cacheKey = (text: string) => `bv:tr:${hash(text)}`;
+/** 每书隔离的译文缓存子键：目标语言 + 段落哈希 */
+const trSub = (lang: string, text: string) => `${lang}::${hash(text)}`;
 
 async function myMemory(text: string, from: string, to: string): Promise<string> {
   const url = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(text.slice(0, 450))}&langpair=${from}|${to}`;
@@ -37,17 +38,17 @@ export interface TranslateOpts {
   force?: boolean;
 }
 
-/** 翻译一段文本（带缓存）。中文 → 英文；其他 → 简体中文。 */
-export async function translate(text: string, opts?: TranslateOpts): Promise<string> {
+/** 翻译一段文本（带每书缓存）。中文 → 英文；其他 → 简体中文。 */
+export async function translate(text: string, bookId: string, opts?: TranslateOpts): Promise<string> {
   const clean = text.trim();
   if (!clean) return "";
-  const key = cacheKey(clean);
-  if (!opts?.force) {
-    const hit = await get<string>(key);
-    if (hit) return hit;
-  }
   const source = detectLang(clean);
   const target: "zh" | "en" = source === "zh" ? "en" : "zh";
+  const sub = trSub(target, clean);
+  if (!opts?.force) {
+    const hit = await loadBookStore<string>(bookId, "translations", sub);
+    if (hit) return hit;
+  }
   const settings = opts?.settings ?? loadLlmSettings();
 
   let out = "";
@@ -63,13 +64,14 @@ export async function translate(text: string, opts?: TranslateOpts): Promise<str
     out = trParts.join(" ");
   }
   if (!out) throw new Error("翻译失败：LLM 与在线接口均不可用");
-  await set(key, out);
+  await saveBookStore(bookId, "translations", out, sub);
   return out;
 }
 
 /** 批量翻译（顺序执行、可中止、带进度），返回与输入等长的译文数组 */
 export async function translateBatch(
   texts: string[],
+  bookId: string,
   onProgress: (done: number, total: number) => void,
   isCancelled: () => boolean,
   opts?: TranslateOpts,
@@ -79,7 +81,7 @@ export async function translateBatch(
     if (isCancelled()) break;
     onProgress(i, texts.length);
     try {
-      out[i] = await translate(texts[i], opts);
+      out[i] = await translate(texts[i], bookId, opts);
     } catch (e) {
       out[i] = `（翻译失败：${e instanceof Error ? e.message : "未知错误"}）`;
     }

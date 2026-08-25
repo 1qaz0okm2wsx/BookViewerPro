@@ -1,7 +1,8 @@
-/** LLM 客户端：支持本地 Ollama 与 OpenAI 兼容接口（含 DeepSeek/Qwen/本地 llama.cpp 等） */
+/** LLM 客户端：智谱 AI（默认）/ 本地 Ollama / OpenAI 兼容接口 */
+import { AI_PROVIDERS, DEFAULT_PROVIDER } from "../config/api-config";
 
 export interface LlmSettings {
-  provider: "ollama" | "openai";
+  provider: "zhipu" | "ollama" | "openai";
   baseUrl: string;
   model: string;
   apiKey: string;
@@ -10,9 +11,9 @@ export interface LlmSettings {
 const LS_KEY = "bv.llm.settings";
 
 export const DEFAULT_LLM: LlmSettings = {
-  provider: "ollama",
-  baseUrl: "http://localhost:11434",
-  model: "qwen2.5",
+  provider: DEFAULT_PROVIDER,
+  baseUrl: AI_PROVIDERS[DEFAULT_PROVIDER].baseUrl,
+  model: AI_PROVIDERS[DEFAULT_PROVIDER].model,
   apiKey: "",
 };
 
@@ -47,6 +48,10 @@ export async function chat(settings: LlmSettings, messages: ChatMessage[]): Prom
     const data = (await res.json()) as { message?: { content?: string } };
     return data.message?.content ?? "";
   }
+  // zhipu 与 openai 均走 OpenAI 兼容协议
+  if (settings.provider === "zhipu" && !settings.apiKey) {
+    throw new Error("智谱 AI 需要 API Key：请在下方「模型接入」中粘贴（仅存本机）");
+  }
   const res = await fetch(`${base}/chat/completions`, {
     method: "POST",
     headers: {
@@ -55,7 +60,13 @@ export async function chat(settings: LlmSettings, messages: ChatMessage[]): Prom
     },
     body: JSON.stringify({ model: settings.model, messages, temperature: 0.4 }),
   });
-  if (!res.ok) throw new Error(`接口返回 ${res.status}，请检查 Base URL 与 API Key`);
+  if (!res.ok) {
+    throw new Error(
+      settings.provider === "zhipu"
+        ? `智谱返回 ${res.status}：请检查 API Key 是否有效、账户是否有额度`
+        : `接口返回 ${res.status}，请检查 Base URL 与 API Key`,
+    );
+  }
   const data = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> };
   return data.choices?.[0]?.message?.content ?? "";
 }

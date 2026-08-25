@@ -1,6 +1,7 @@
 /** 轻量级 RAG：书籍分块 → 向量化（@xenova/transformers，浏览器端）→ 余弦检索 */
 import type { ParsedBook } from "../types";
 import { stripHtml } from "../lib/parse";
+import { loadBookStore, saveBookStore, delBookStore } from "../db/BookDB";
 
 export interface Chunk {
   bookId: string;
@@ -135,6 +136,42 @@ export async function buildIndex(
     onStage?.(`嵌入模型不可用，已切换为本地关键词索引（${chunks.length} 段）`);
     return { chunks, vectors: null, mode: "keyword" };
   }
+}
+
+/* ---------------- 向量持久化（每书一库 · embeddings 表） ---------------- */
+
+interface PersistedIndex {
+  chunks: Chunk[];
+  vectors: number[][];
+  fingerprint: string;
+}
+
+/** 用分块数量与首尾块文本生成指纹，内容变化时自动失效旧向量 */
+function fingerprintOf(chunks: Chunk[]): string {
+  const first = chunks[0]?.text.slice(0, 40) ?? "";
+  const last = chunks[chunks.length - 1]?.text.slice(0, 40) ?? "";
+  return `${chunks.length}|${first}|${last}`;
+}
+
+export async function saveIndex(bookId: string, index: SearchIndex): Promise<void> {
+  if (index.mode !== "vector" || !index.vectors) return;
+  await saveBookStore<PersistedIndex>(bookId, "embeddings", {
+    chunks: index.chunks,
+    vectors: index.vectors,
+    fingerprint: fingerprintOf(index.chunks),
+  });
+}
+
+/** 命中缓存则直接返回向量索引，避免重复嵌入；内容已变则返回 null */
+export async function loadIndex(bookId: string, parsed: ParsedBook): Promise<SearchIndex | null> {
+  const stored = await loadBookStore<PersistedIndex>(bookId, "embeddings");
+  if (!stored || !stored.vectors?.length) return null;
+  const chunks = chunkBook(bookId, parsed);
+  if (fingerprintOf(chunks) !== stored.fingerprint) {
+    await delBookStore(bookId, "embeddings");
+    return null;
+  }
+  return { chunks, vectors: stored.vectors, mode: "vector" };
 }
 
 export function searchIndex(index: SearchIndex, query: string, qVec: number[] | null, k = 4): Chunk[] {

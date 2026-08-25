@@ -94,7 +94,7 @@ export default function BilingualView() {
           const row = rows[idx];
           if (!row || row.tr || row.loading || batchBusy) return;
           setRows((prev) => prev.map((r, i) => (i === idx ? { ...r, loading: true } : r)));
-          translate(row.text, { settings: loadLlmSettings() })
+          translate(row.text, bookId, { settings: loadLlmSettings() })
             .then((tr) => {
               setRows((prev) => prev.map((r, i) => (i === idx ? { ...r, tr, loading: false } : r)));
               const arr = sessionCache.get(chapterKey) ?? new Array(rows.length).fill("");
@@ -109,16 +109,17 @@ export default function BilingualView() {
     rowRefs.current.forEach((el) => el && io.observe(el));
     return () => io.disconnect();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rows.length, chapterKey, batchBusy]);
+  }, [rows.length, chapterKey, batchBusy, bookId]);
 
   const translateChapter = useCallback(async () => {
-    if (!rows.length || batchBusy) return;
+    if (!rows.length || batchBusy || !bookId) return;
     cancelRef.current = false;
     setBatchBusy(true);
     const missing = rows.map((r, i) => ({ i, text: r.text })).filter((x) => !rows[x.i].tr);
     const results = await translateBatch(
       missing.map((x) => x.text),
-      (done, total) => setBatchProg({ done, total }),
+      bookId,
+      (done: number, total: number) => setBatchProg({ done, total }),
       () => cancelRef.current,
       { settings: loadLlmSettings() },
     );
@@ -131,7 +132,7 @@ export default function BilingualView() {
     setBatchBusy(false);
     app.toast("本章翻译完成");
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rows, batchBusy, chapterKey]);
+  }, [rows, batchBusy, chapterKey, bookId]);
 
   /* 一键全本翻译 */
   const translateWhole = async () => {
@@ -146,7 +147,8 @@ export default function BilingualView() {
     });
     const results = await translateBatch(
       allTexts,
-      (done, total) => setWholeProg({ done, total }),
+      book.id,
+      (done: number, total: number) => setWholeProg({ done, total }),
       () => cancelRef.current,
       { settings: loadLlmSettings() },
     );

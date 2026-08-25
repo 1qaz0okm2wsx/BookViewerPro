@@ -2,6 +2,9 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { saveAs } from "file-saver";
 import { useApp } from "../store";
+import { parseBook, stripHtml } from "../lib/parse";
+import { loadBookStore, saveBookStore } from "../db/BookDB";
+import { chat, loadLlmSettings } from "../ai/llm";
 import { Icon } from "./icons";
 import { Btn, Spinner, ViewHeader } from "./ui";
 
@@ -158,6 +161,28 @@ function GraphTab() {
   );
 }
 
+/** 从已解析的章节构建层级大纲（章节 + 子标题 + 代表性段落） */
+function buildOutlineFromParsed(title: string, chapters: Array<{ title: string; html: string }>): string {
+  const lines: string[] = [`# ${title}`];
+  chapters.forEach((ch) => {
+    lines.push(`## ${ch.title}`);
+    const doc = new DOMParser().parseFromString(ch.html, "text/html");
+    const subs = Array.from(doc.querySelectorAll("h3,h4")).slice(0, 12);
+    if (subs.length) {
+      subs.forEach((s) => {
+        const t = (s.textContent ?? "").trim();
+        if (t) lines.push(`### ${t}`);
+      });
+    } else {
+      Array.from(doc.querySelectorAll("p")).slice(0, 4).forEach((p) => {
+        const t = (p.textContent ?? "").trim();
+        if (t) lines.push(`- ${t.slice(0, 30)}${t.length > 30 ? "…" : ""}`);
+      });
+    }
+  });
+  return lines.join("\n");
+}
+
 function MindTab() {
   const app = useApp();
   const textBooks = app.books;
@@ -165,34 +190,71 @@ function MindTab() {
   const svgRef = useRef<SVGSVGElement>(null);
   const mmRef = useRef<{ destroy: () => void } | null>(null);
   const [busy, setBusy] = useState(false);
+  const [aiBusy, setAiBusy] = useState(false);
   const [failed, setFailed] = useState("");
+  const [markdown, setMarkdown] = useState("");
+  const [source, setSource] = useState<"db" | "content" | "ai" | "">("");
 
   const book = textBooks.find((b) => b.id === bookId) ?? null;
-  const bookNotes = useMemo(() => app.annotations.filter((n) => n.bookId === bookId), [app.annotations, bookId]);
 
-  const markdown = useMemo(() => {
-    if (!book) return "";
-    const lines: string[] = [`# ${book.title}`];
-    const byChapter = new Map<string, typeof bookNotes>();
-    bookNotes.forEach((n) => {
-      const arr = byChapter.get(n.chapterTitle) ?? [];
-      arr.push(n);
-      byChapter.set(n.chapterTitle, arr);
-    });
-    // 章节来自进度/批注；无批注则列出提示
-    if (byChapter.size) {
-      byChapter.forEach((list, ch) => {
-        lines.push(`## ${ch}`);
-        list.forEach((n) => {
-          lines.push(`- ${n.text.slice(0, 42)}${n.text.length > 42 ? "…" : ""}`);
-          if (n.note) lines.push(`  - 批注：${n.note.slice(0, 40)}`);
-        });
-      });
-    } else {
-      lines.push("## （暂无批注）", "- 在阅读器中划选文字做高亮与批注", "- 思维导图会自动按章节聚合它们");
+  /* 选择书后：优先从该书数据库 mindmap 表读取，否则从内容提取并落库 */
+  useEffect(() => {
+    let cancelled = false;
+    setMarkdown("");
+    setSource("");
+    if (!bookId || !book) return;
+    (async () => {
+      const stored = await loadBookStore<string>(bookId, "mindmap");
+      if (stored && !cancelled) {
+        setMarkdown(stored);
+        setSource("db");
+        return;
+      }
+      const blob = await app.getBlob(bookId);
+      if (!blob || cancelled) return;
+      try {
+        const parsed = await parseBook(book, blob);
+        const md = buildOutlineFromParsed(parsed.title || book.title, parsed.chapters);
+        if (cancelled) return;
+        setMarkdown(md);
+        setSource("content");
+        await saveBookStore(bookId, "mindmap", md);
+      } catch (e) {
+        if (!cancelled) setFailed(e instanceof Error ? e.message : "大纲提取失败");
+      }
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bookId]);
+
+  /* AI 重生成全书大纲（调用 LLM 归纳层级，覆盖并落库） */
+  const regenAI = async () => {
+    if (!book || aiBusy) return;
+    setAiBusy(true);
+    setFailed("");
+    try {
+      const blob = await app.getBlob(book.id);
+      if (!blob) throw new Error("读取书籍失败");
+      const parsed = await parseBook(book, blob);
+      const sample = parsed.chapters.slice(0, 30)
+        .map((c) => `${c.title}：${stripHtml(c.html).replace(/\s+/g, " ").slice(0, 180)}`)
+        .join("\n");
+      const md = await chat(loadLlmSettings(), [
+        { role: "system", content: "你是文档分析专家。根据用户给出的书籍章节与内容摘要，提取主要章节和子主题，生成一个层级大纲（Markdown：# 书名，## 章，###/#### 子主题），最多 4 级，只输出 Markdown，不要解释。" },
+        { role: "user", content: `书名：${parsed.title}\n\n${sample}` },
+      ]);
+      const clean = md.replace(/^```[a-z]*\n?/i, "").replace(/```$/g, "").trim();
+      if (!clean) throw new Error("AI 未返回有效大纲");
+      setMarkdown(clean);
+      setSource("ai");
+      await saveBookStore(book.id, "mindmap", clean);
+      app.toast("AI 大纲已生成并存入该书数据库");
+    } catch (e) {
+      setFailed(e instanceof Error ? e.message : "AI 生成失败（请检查模型接入）");
+    } finally {
+      setAiBusy(false);
     }
-    return lines.join("\n");
-  }, [book, bookNotes]);
+  };
 
   useEffect(() => {
     if (!markdown || !svgRef.current) return;
@@ -230,12 +292,17 @@ function MindTab() {
       <div className="flex items-center gap-2 px-4 py-2.5 border-b border-line bg-paper/70 flex-wrap">
         <select value={bookId} onChange={(e) => setBookId(e.target.value)} className="bg-card border border-line rounded-md px-2.5 py-1.5 text-xs outline-none focus:border-verm cursor-pointer">
           <option value="">选择一本书…</option>
-          {textBooks.map((b) => <option key={b.id} value={b.id}>{b.title}（{app.annotations.filter((n) => n.bookId === b.id).length} 条批注）</option>)}
+          {textBooks.map((b) => <option key={b.id} value={b.id}>{b.title}</option>)}
         </select>
-        <span className="text-[11px] text-mist">目录 + 批注自动聚合为可折叠脑图</span>
+        <span className="text-[11px] text-mist">
+          {source === "db" ? "已从该书数据库载入大纲" : source === "content" ? "已自动从全书内容提取纲要并落库" : source === "ai" ? "AI 生成的大纲（已存入数据库）" : "从全书章节结构自动提取内容纲要"}
+        </span>
         <span className="ml-auto flex gap-1.5">
-          <Btn size="sm" variant="ghost" onClick={exportMd} disabled={!book}><Icon name="download" size={12} /> Markdown</Btn>
-          <Btn size="sm" variant="ghost" onClick={exportSvg} disabled={!book}><Icon name="image" size={12} /> SVG 图片</Btn>
+          <Btn size="sm" variant="ghost" onClick={regenAI} disabled={!book || aiBusy}>
+            {aiBusy ? <Spinner size={12} /> : <Icon name="spark" size={12} />} AI 重生成
+          </Btn>
+          <Btn size="sm" variant="ghost" onClick={exportMd} disabled={!book || !markdown}><Icon name="download" size={12} /> Markdown</Btn>
+          <Btn size="sm" variant="ghost" onClick={exportSvg} disabled={!book || !markdown}><Icon name="image" size={12} /> SVG 图片</Btn>
         </span>
       </div>
       <div className="relative h-[58vh]">

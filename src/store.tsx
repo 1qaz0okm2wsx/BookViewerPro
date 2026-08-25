@@ -2,7 +2,6 @@ import React, { createContext, useCallback, useContext, useEffect, useMemo, useR
 import JSZip from "jszip";
 import { set } from "idb-keyval";
 import { KEYS, fileKey, loadJSON, saveJSON, del } from "./lib/idb";
-import { buildSamples } from "./lib/samples";
 import { detectFormat, parseBook, titleFromFile } from "./lib/parse";
 import { makeCover } from "./lib/cover";
 import {
@@ -32,6 +31,7 @@ interface AppContextValue {
   closeReader: () => void;
   addFiles: (files: FileList | File[]) => Promise<void>;
   importBatch: (files: FileList | File[], onProgress?: (done: number, total: number, name: string) => void) => Promise<number>;
+  downloadSample: (kind?: "mao") => Promise<void>;
   removeBook: (id: string) => void;
   updateBookMeta: (id: string, patch: Partial<BookMeta>) => void;
   getBlob: (id: string) => Promise<Blob | undefined>;
@@ -86,23 +86,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   });
   const timers = useRef<number[]>([]);
 
-  /* ---------- 初始化 ---------- */
+  /* ---------- 初始化：只从本地数据库加载，绝不预置任何数据 ---------- */
   useEffect(() => {
     (async () => {
-      let list = await loadJSON<BookMeta[]>(KEYS.books, []);
-      if (!list.length) {
-        const seeded = await loadJSON<boolean>(KEYS.seeded, false);
-        if (!seeded) {
-          try {
-            const samples = await buildSamples();
-            for (const s of samples) await set(fileKey(s.meta.id), s.blob);
-            list = samples.map((s) => s.meta);
-            await saveJSON(KEYS.seeded, true);
-          } catch (e) {
-            console.warn("示例书库构建失败", e);
-          }
-        }
-      }
+      const list = await loadJSON<BookMeta[]>(KEYS.books, []);
       setBooks(list);
       setAnnotations(await loadJSON<Annotation[]>(KEYS.notes, []));
       setBookmarks(await loadJSON<Bookmark[]>(KEYS.marks, []));
@@ -216,6 +203,22 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     return done;
   }, [buildMetaForFile, enrichMeta, toast]);
 
+  /**
+   * 示例书籍下载（真实公有领域内容，用户显式触发，绝不自动预置）。
+   * kind: 'mao' → 《毛泽东选集 · 老三篇》EPUB
+   */
+  const downloadSample = useCallback(async (kind: "mao" = "mao"): Promise<void> => {
+    try {
+      const { buildMaoSample } = await import("./lib/samples/mao");
+      const { meta, blob } = await buildMaoSample();
+      await set(fileKey(meta.id), blob);
+      setBooks((prev) => [meta, ...prev]);
+      toast(`已下载并建库：《${meta.title}》（${meta.tags?.join(" / ") ?? "示例"}）`);
+    } catch (e) {
+      toast(e instanceof Error ? e.message : "示例书籍构建失败", "error");
+    }
+  }, [toast]);
+
   const removeBook = useCallback(async (id: string) => {
     const book = books.find((b) => b.id === id);
     await del(fileKey(id));
@@ -319,7 +322,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const value = useMemo<AppContextValue>(() => ({
     ready, books, annotations, bookmarks, progress, exports, toasts, stats, keybindings,
     view, setView, activeBookId, openBook, closeReader,
-    addFiles, importBatch, removeBook, updateBookMeta, getBlob,
+    addFiles, importBatch, downloadSample, removeBook, updateBookMeta, getBlob,
     addAnnotation, updateAnnotation, removeAnnotation,
     addBookmark, removeBookmark, setProgress,
     addExport, removeExport,
@@ -327,7 +330,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     toast, dismissToast, pendingJump, setPendingJump, exportPickId, setExportPickId,
   }), [
     ready, books, annotations, bookmarks, progress, exports, toasts, stats, keybindings,
-    view, activeBookId, openBook, closeReader, addFiles, importBatch, removeBook, updateBookMeta, getBlob,
+    view, activeBookId, openBook, closeReader, addFiles, importBatch, downloadSample, removeBook, updateBookMeta, getBlob,
     addAnnotation, updateAnnotation, removeAnnotation, addBookmark, removeBookmark,
     setProgress, addExport, removeExport, addReadingTick, clearStats, setKeybinding,
     resetKeybindings, getOcr, toast, dismissToast, pendingJump, exportPickId,
