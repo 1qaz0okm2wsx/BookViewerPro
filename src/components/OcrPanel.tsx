@@ -2,7 +2,7 @@ import React, { useRef, useState } from "react";
 import { saveAs } from "file-saver";
 import { useApp } from "../store";
 import { parseBook, getCbzImage } from "../lib/parse";
-import pdfjs from "../lib/pdf";
+import pdfjs, { ensurePdfReady } from "../lib/pdf";
 import { recognizeImage, saveOcrPage, getOcrMap } from "../lib/ocr";
 import { buildSearchablePdf } from "../lib/searchablePdf";
 import type { SearchablePage } from "../lib/searchablePdf";
@@ -49,6 +49,7 @@ export default function OcrPanel() {
       const blob = await app.getBlob(id);
       if (!blob) throw new Error("本地存储中找不到该书文件");
       if (b.format === "pdf") {
+        await ensurePdfReady();
         const doc = (await pdfjs.getDocument({ data: new Uint8Array((await blob.arrayBuffer()).slice(0)) }).promise) as unknown as PdfDoc;
         pdfDocRef.current = doc;
         setPageTotal(doc.numPages);

@@ -3,6 +3,10 @@ declare module "https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.2" {
   export = mod;
 }
 
+declare module "pdfjs-dist/build/pdf.worker.min.mjs" {
+  export const WorkerMessageHandler: unknown;
+}
+
 declare module "mammoth" {
   interface MammothResult {
     value: string;

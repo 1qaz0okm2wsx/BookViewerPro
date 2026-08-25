@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useApp } from "../store";
 import { parseBook, getCbzImage } from "../lib/parse";
-import pdfjs from "../lib/pdf";
+import pdfjs, { ensurePdfReady } from "../lib/pdf";
 import { selectionToOffsets, wrapRange, unwrapAll } from "../lib/domrange";
 import { Icon } from "./icons";
 import type { IconName } from "./icons";
@@ -228,6 +228,7 @@ export default function ReaderView() {
     let cancelled = false;
     (async () => {
       try {
+        await ensurePdfReady();
         const doc = await pdfjs.getDocument({ data: new Uint8Array(parsed.pdfData!.slice(0)) }).promise;
         if (cancelled) return;
         pdfDocRef.current = doc as unknown as typeof pdfDocRef.current;

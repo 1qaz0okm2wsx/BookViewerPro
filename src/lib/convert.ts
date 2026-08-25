@@ -4,7 +4,7 @@ import { Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType } fro
 import TurndownService from "turndown";
 import { buildEpub } from "./epub";
 import { parseBook, stripHtml, getCbzImage, getCbzImageList, readAsDataUrl } from "./parse";
-import pdfjs from "./pdf";
+import pdfjs, { ensurePdfReady } from "./pdf";
 import type { BookFormat, BookMeta, ParsedBook, ParsedChapter } from "../types";
 
 export interface ConvertTarget {
@@ -209,6 +209,7 @@ async function htmlToPdfBlob(html: string, title: string): Promise<Blob> {
 }
 
 async function pdfToText(data: ArrayBuffer): Promise<string> {
+  await ensurePdfReady();
   const task = pdfjs.getDocument({ data: new Uint8Array(data.slice(0)) });
   const doc = await task.promise;
   const parts: string[] = [];
