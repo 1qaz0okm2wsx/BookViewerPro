@@ -1,12 +1,21 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import JSZip from 'jszip';
 import { GlobalWorkerOptions, getDocument } from 'pdfjs-dist';
 
-type BookKind = 'text' | 'pdf';
+type BookKind = 'text' | 'pdf' | 'epub';
+type BookCategory = 'Favorites' | 'Current' | 'Study' | 'Imported' | 'General';
 
 type Chapter = {
   id: string;
   title: string;
   content: string[];
+};
+
+type Highlight = {
+  id: string;
+  text: string;
+  chapterIndex: number;
+  color: string;
 };
 
 type Book = {
@@ -17,15 +26,19 @@ type Book = {
   chapters: Chapter[];
   bookmarks?: string[];
   note?: string;
+  highlights?: Highlight[];
   kind?: BookKind;
   pdfData?: ArrayBuffer;
   currentChapter?: number;
+  category?: BookCategory;
 };
 
 const STORAGE_KEY = 'bookviewerpro-library';
 const THEME_KEY = 'bookviewerpro-theme';
 const SELECTED_BOOK_KEY = 'bookviewerpro-selected-book';
 const CHAPTER_INDEX_KEY = 'bookviewerpro-chapter-index';
+
+const categoryOptions: BookCategory[] = ['Favorites', 'Current', 'Study', 'Imported', 'General'];
 
 const defaultBooks: Book[] = [
   {
@@ -66,6 +79,10 @@ const defaultBooks: Book[] = [
     note: 'A whimsical and imaginative work about curiosity and transformation.',
     kind: 'text',
     currentChapter: 0,
+    category: 'Favorites',
+    highlights: [
+      { id: 'h-alice-1', text: 'and what is the use of a book', chapterIndex: 0, color: '#fde68a' }
+    ],
   },
   {
     id: 'pride',
@@ -95,6 +112,7 @@ const defaultBooks: Book[] = [
     note: 'Classic social comedy focused on marriage, reputation, and personal perception.',
     kind: 'text',
     currentChapter: 0,
+    category: 'Current',
   },
   {
     id: 'forest',
@@ -125,6 +143,7 @@ const defaultBooks: Book[] = [
     note: 'A poetic, philosophical story about innocence, imagination, and relationships.',
     kind: 'text',
     currentChapter: 0,
+    category: 'Study',
   },
 ];
 
@@ -164,6 +183,97 @@ function getInitialBooks(): Book[] {
   }
 }
 
+function isXmlTextNode(node: Node | null | undefined) {
+  return !!node && node.nodeType === Node.TEXT_NODE;
+}
+
+async function parseEpubFile(arrayBuffer: ArrayBuffer): Promise<{ title: string; author: string; chapters: Chapter[] }> {
+  const zip = await JSZip.loadAsync(arrayBuffer);
+  const opfEntry = zip.file(/\.(opf)$/i).find((file) => file.name.toLowerCase().endsWith('.opf')) ?? null;
+  if (!opfEntry) {
+    return {
+      title: 'Imported EPUB',
+      author: 'Unknown',
+      chapters: [{ id: 'epub-1', title: 'EPUB', content: ['This EPUB could not be parsed automatically.'] }],
+    };
+  }
+
+  const opfContent = await opfEntry.async('string');
+  const xmlDoc = new DOMParser().parseFromString(opfContent, 'application/xml');
+
+  const getTagValue = (selector: string) => {
+    const element = Array.from(xmlDoc.getElementsByTagName('*')).find((node) => node.localName === selector);
+    return element?.textContent?.trim() ?? '';
+  };
+
+  const title = getTagValue('title') || 'Imported EPUB';
+  const author = getTagValue('creator') || 'Unknown author';
+
+  const manifest: Array<{ id: string; href: string; type?: string }> = [];
+  const manifestNodes = Array.from(xmlDoc.getElementsByTagName('*')).filter((node) => node.localName === 'item');
+  manifestNodes.forEach((node) => {
+    const href = node.getAttribute('href');
+    const id = node.getAttribute('id');
+    const type = node.getAttribute('media-type') || '';
+    if (href && id) {
+      manifest.push({ id, href, type });
+    }
+  });
+
+  const spineRefs = Array.from(xmlDoc.getElementsByTagName('*'))
+    .filter((node) => node.localName === 'itemref')
+    .map((node) => node.getAttribute('idref'))
+    .filter(Boolean) as string[];
+
+  const spineItems = spineRefs
+    .map((refId) => manifest.find((item) => item.id === refId))
+    .filter(Boolean) as Array<{ id: string; href: string; type?: string }>;
+
+  const preferredFiles = (spineItems.length > 0 ? spineItems : manifest).filter((item) => {
+    const href = item.href.toLowerCase();
+    return href.endsWith('.xhtml') || href.endsWith('.html') || href.endsWith('.xml');
+  });
+
+  const chapters: Chapter[] = [];
+
+  for (let i = 0; i < preferredFiles.length; i += 1) {
+    const item = preferredFiles[i];
+    const itemPath = opfEntry.name.includes('/')
+      ? `${opfEntry.name.split('/').slice(0, -1).join('/')}/${item.href}`
+      : item.href;
+    const file = zip.file(itemPath) ?? zip.file(item.href) ?? null;
+    if (!file) continue;
+
+    const html = await file.async('string');
+    const parsed = new DOMParser().parseFromString(html, 'text/html');
+    const body = parsed.body || parsed.documentElement;
+		const selectedNodes = Array.from(body.querySelectorAll('p, h1, h2, h3, li, div, section')).map((el) => {
+      const text = (el.textContent || '').replace(/\s+/g, ' ').trim();
+      return text.length > 2 ? text : '';
+    }).filter(Boolean);
+
+    const textSegments = selectedNodes.length > 0
+      ? selectedNodes
+      : [((body.textContent || '').replace(/\s+/g, ' ').trim() || 'No readable text available.')];
+
+    chapters.push({
+      id: `epub-chapter-${i + 1}`,
+      title: `Chapter ${i + 1}`,
+      content: textSegments,
+    });
+  }
+
+  if (chapters.length === 0) {
+    return {
+      title,
+      author,
+      chapters: [{ id: 'epub-fallback', title: 'EPUB', content: ['This EPUB was imported but no readable text could be extracted.'] }],
+    };
+  }
+
+  return { title, author, chapters };
+}
+
 function App() {
   const [books, setBooks] = useState<Book[]>(getInitialBooks);
   const [selectedBookId, setSelectedBookId] = useState<string>(() => {
@@ -179,10 +289,13 @@ function App() {
     return localStorage.getItem(THEME_KEY) === 'dark';
   });
   const [searchQuery, setSearchQuery] = useState('');
-  const [filter, setFilter] = useState<'all' | 'text' | 'pdf'>('all');
+  const [typeFilter, setTypeFilter] = useState<'all' | 'text' | 'pdf' | 'epub'>('all');
+  const [categoryFilter, setCategoryFilter] = useState<BookCategory | 'All'>('All');
   const [pdfTextPages, setPdfTextPages] = useState<string[]>([]);
   const [pdfPageNumber, setPdfPageNumber] = useState(1);
+  const [exportMessage, setExportMessage] = useState('');
   const pdfCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const articleRef = useRef<HTMLElement | null>(null);
 
   const selectedBook = useMemo(
     () => books.find((book) => book.id === selectedBookId) ?? books[0],
@@ -190,9 +303,13 @@ function App() {
   );
 
   const filteredBooks = useMemo(() => {
-    if (filter === 'all') return books;
-    return books.filter((book) => (book.kind ?? 'text') === filter);
-  }, [books, filter]);
+    return books.filter((book) => {
+      const kind = book.kind ?? 'text';
+      const typeMatch = typeFilter === 'all' || kind === typeFilter;
+      const categoryMatch = categoryFilter === 'All' || book.category === categoryFilter;
+      return typeMatch && categoryMatch;
+    });
+  }, [books, typeFilter, categoryFilter]);
 
   const chapterIndex = selectedBook?.currentChapter ?? 0;
   const currentChapter = selectedBook.chapters[chapterIndex] ?? selectedBook.chapters[0];
@@ -200,6 +317,12 @@ function App() {
   const progress = chapterCount === 0 ? 0 : ((chapterIndex + 1) / chapterCount) * 100;
   const bookmarked = selectedBook.bookmarks ?? [];
   const isBookmarked = bookmarked.includes(currentChapter.id);
+
+  const filteredContent = searchQuery.trim()
+    ? currentChapter.content.filter((paragraph) =>
+        paragraph.toLowerCase().includes(searchQuery.trim().toLowerCase())
+      )
+    : currentChapter.content;
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(books));
@@ -306,24 +429,9 @@ function App() {
     };
   }, [selectedBook, pdfPageNumber]);
 
-  const filteredContent = searchQuery.trim()
-    ? currentChapter.content.filter((paragraph) =>
-        paragraph.toLowerCase().includes(searchQuery.trim().toLowerCase())
-      )
-    : currentChapter.content;
-
   const handleBookSelection = (bookId: string) => {
     setSelectedBookId(bookId);
-    const nextBook = books.find((book) => book.id === bookId);
-    if (nextBook) {
-      setSearchQuery('');
-      const nextIndex = nextBook.currentChapter ?? 0;
-      setBooks((oldBooks) =>
-        oldBooks.map((book) =>
-          book.id === bookId ? { ...book, currentChapter: nextIndex } : book
-        )
-      );
-    }
+    setSearchQuery('');
   };
 
   const handleChapterChange = (nextIndex: number) => {
@@ -365,6 +473,12 @@ function App() {
     );
   };
 
+  const handleCategoryChange = (nextCategory: BookCategory) => {
+    setBooks((oldBooks) =>
+      oldBooks.map((book) => (book.id === selectedBookId ? { ...book, category: nextCategory } : book))
+    );
+  };
+
   const handleLoadFile = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -382,6 +496,30 @@ function App() {
         kind: 'pdf',
         pdfData,
         currentChapter: 0,
+        category: 'Imported',
+      };
+
+      setBooks((oldBooks) => [newBook, ...oldBooks]);
+      setSelectedBookId(newBook.id);
+      setSearchQuery('');
+      event.target.value = '';
+      return;
+    }
+
+    if (file.name.toLowerCase().endsWith('.epub')) {
+      const data = await file.arrayBuffer();
+      const parsed = await parseEpubFile(data);
+      const newBook: Book = {
+        id: `${file.name}-${Date.now()}`,
+        title: parsed.title || file.name.replace(/\.[^/.]+$/, '') || 'Imported EPUB',
+        author: parsed.author || 'Unknown author',
+        cover: '📘',
+        chapters: parsed.chapters,
+        bookmarks: [],
+        note: 'This EPUB was imported from a local file.',
+        kind: 'epub',
+        currentChapter: 0,
+        category: 'Imported',
       };
 
       setBooks((oldBooks) => [newBook, ...oldBooks]);
@@ -403,6 +541,7 @@ function App() {
       note: 'Imported from local file; continue reading from your newly added content.',
       kind: 'text',
       currentChapter: 0,
+      category: 'Imported',
     };
 
     setBooks((oldBooks) => [newBook, ...oldBooks]);
@@ -433,6 +572,7 @@ function App() {
       note: 'Personal writing workspace for your ideas and drafts.',
       kind: 'text',
       currentChapter: 0,
+      category: 'General',
     };
 
     setBooks((oldBooks) => [sample, ...oldBooks]);
@@ -445,7 +585,65 @@ function App() {
     setSearchQuery('');
   };
 
+  const handleHighlightSelection = () => {
+    const selection = window.getSelection();
+    const text = selection?.toString().trim();
+    const article = articleRef.current;
+
+    if (!text || !article) return;
+    const range = selection?.getRangeAt(0);
+    if (!range || !article.contains(range.commonAncestorContainer)) return;
+
+    const highlight: Highlight = {
+      id: `highlight-${Date.now()}`,
+      text,
+      chapterIndex,
+      color: '#fde68a',
+    };
+
+    setBooks((oldBooks) =>
+      oldBooks.map((book) =>
+        book.id === selectedBookId
+          ? {
+              ...book,
+              highlights: [...(book.highlights ?? []), highlight],
+            }
+          : book
+      )
+    );
+
+    selection.removeAllRanges();
+  };
+
+  const handleExportHighlights = () => {
+    const highlights = selectedBook.highlights ?? [];
+    if (!highlights.length) {
+      setExportMessage('No highlights available to export.');
+      return;
+    }
+
+    const text = [
+      `Book: ${selectedBook.title}`,
+      `Author: ${selectedBook.author}`,
+      '',
+      'Highlights:',
+      ...highlights.map((highlight) => `- [Chapter ${highlight.chapterIndex + 1}] ${highlight.text}`),
+      '',
+      `Exported at: ${new Date().toISOString()}`,
+    ].join('\n');
+
+    const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `${selectedBook.title}-highlights.txt`;
+    link.click();
+    URL.revokeObjectURL(url);
+    setExportMessage('Highlights exported successfully.');
+  };
+
   const isPdfBook = selectedBook.kind === 'pdf';
+  const isEpubBook = selectedBook.kind === 'epub';
   const currentPdfText = pdfTextPages[pdfPageNumber - 1] ?? 'PDF content is loading...';
 
   return (
@@ -461,19 +659,31 @@ function App() {
             <button className="link-button" onClick={handleAddSample}>New</button>
             <label className="upload-button">
               Add File
-              <input type="file" accept=".txt,.md,.pdf" onChange={handleLoadFile} />
+              <input type="file" accept=".txt,.md,.pdf,.epub" onChange={handleLoadFile} />
             </label>
           </div>
         </div>
 
         <div className="filter-row">
-          {(['all', 'text', 'pdf'] as const).map((option) => (
+          {(['all', 'text', 'pdf', 'epub'] as const).map((option) => (
             <button
               key={option}
-              className={filter === option ? 'filter-chip active' : 'filter-chip'}
-              onClick={() => setFilter(option)}
+              className={typeFilter === option ? 'filter-chip active' : 'filter-chip'}
+              onClick={() => setTypeFilter(option)}
             >
               {option === 'all' ? 'All' : option.toUpperCase()}
+            </button>
+          ))}
+        </div>
+
+        <div className="filter-row category-row">
+          {(['All', ...categoryOptions] as const).map((option) => (
+            <button
+              key={option}
+              className={categoryFilter === option ? 'filter-chip active' : 'filter-chip'}
+              onClick={() => setCategoryFilter(option)}
+            >
+              {option}
             </button>
           ))}
         </div>
@@ -524,6 +734,7 @@ function App() {
             <button onClick={handlePrevChapter} disabled={chapterIndex === 0}>Previous</button>
             <button onClick={handleNextChapter} disabled={chapterIndex >= chapterCount - 1}>Next</button>
             <button onClick={handleBookmarkToggle}>{isBookmarked ? '★ Saved' : '☆ Save'}</button>
+            <button onClick={handleExportHighlights}>Export</button>
             <button onClick={() => setDarkMode((prev) => !prev)}>
               {darkMode ? 'Light' : 'Dark'}
             </button>
@@ -536,6 +747,18 @@ function App() {
             />
           </div>
         </header>
+
+        <div className="top-actions">
+          <label className="category-picker-label">
+            Category
+            <select value={selectedBook.category ?? 'General'} onChange={(event) => handleCategoryChange(event.target.value as BookCategory)}>
+              {categoryOptions.map((option) => (
+                <option key={option} value={option}>{option}</option>
+              ))}
+            </select>
+          </label>
+          {exportMessage ? <span className="export-message">{exportMessage}</span> : null}
+        </div>
 
         <div className="stats-grid">
           <div className="stat-card">
@@ -552,7 +775,7 @@ function App() {
           </div>
         </div>
 
-        {!isPdfBook && (
+        {!isPdfBook && !isEpubBook && (
           <div className="chapter-strip">
             {selectedBook.chapters.map((chapter, index) => (
               <button
@@ -578,6 +801,20 @@ function App() {
           </div>
         )}
 
+        {isEpubBook && (
+          <div className="chapter-strip">
+            {selectedBook.chapters.map((chapter, index) => (
+              <button
+                key={chapter.id}
+                className={index === chapterIndex ? 'chapter-pill active' : 'chapter-pill'}
+                onClick={() => handleChapterChange(index)}
+              >
+                {chapter.title}
+              </button>
+            ))}
+          </div>
+        )}
+
         <div className="progress-wrap">
           <div className="progress-bar">
             <span style={{ width: `${progress}%` }} />
@@ -586,7 +823,12 @@ function App() {
         </div>
 
         <div className="content-grid">
-          <article className="book-article" style={{ fontSize: `${fontSize}px` }}>
+          <article
+            ref={articleRef}
+            className="book-article"
+            style={{ fontSize: `${fontSize}px` }}
+            onMouseUp={handleHighlightSelection}
+          >
             {isPdfBook ? (
               <>
                 <div className="pdf-preview">
@@ -622,6 +864,22 @@ function App() {
               onChange={(event) => handleNoteChange(event.target.value)}
               placeholder="Write your personal thoughts about this book..."
             />
+
+            <div className="highlight-panel">
+              <h5>Highlights</h5>
+              {selectedBook.highlights?.length ? (
+                <ul>
+                  {selectedBook.highlights.map((highlight) => (
+                    <li key={highlight.id}>
+                      <span className="highlight-mark" style={{ background: highlight.color }} />
+                      {highlight.text}
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p>Select text in the reading area to create a highlight.</p>
+              )}
+            </div>
           </aside>
         </div>
       </main>

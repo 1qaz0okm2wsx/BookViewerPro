@@ -20,7 +20,7 @@ body {
   min-height: 100vh;
 }
 
-button, input, textarea {
+button, input, textarea, select {
   font: inherit;
 }
 
@@ -113,6 +113,10 @@ button, input, textarea {
   gap: 8px;
   margin-bottom: 12px;
   flex-wrap: wrap;
+}
+
+.category-row {
+  margin-bottom: 14px;
 }
 
 .filter-chip {
@@ -257,6 +261,34 @@ button, input, textarea {
   cursor: not-allowed;
 }
 
+.top-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  margin: 18px 0 12px;
+}
+
+.category-picker-label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 600;
+}
+
+.category-picker-label select {
+  border: 1px solid #dbe1ea;
+  border-radius: 10px;
+  background: #f8fafc;
+  padding: 8px 10px;
+}
+
+.export-message {
+  color: #1d4ed8;
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
 .stats-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(120px, 1fr));
@@ -395,14 +427,15 @@ button, input, textarea {
   min-height: 420px;
 }
 
-.note-panel h4 {
+.note-panel h4,
+.highlight-panel h5 {
   margin: 0 0 12px;
   font-size: 1.1rem;
 }
 
 .note-panel textarea {
   width: 100%;
-  min-height: 330px;
+  min-height: 170px;
   resize: vertical;
   border: 1px solid #dbe1ea;
   border-radius: 12px;
@@ -410,6 +443,39 @@ button, input, textarea {
   color: inherit;
   padding: 12px;
   outline: none;
+}
+
+.highlight-panel {
+  margin-top: 18px;
+}
+
+.highlight-panel ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.highlight-panel li {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid #dbe1ea;
+  border-radius: 10px;
+  background: #f8fafc;
+  line-height: 1.5;
+}
+
+.highlight-mark {
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  display: inline-block;
+  margin-top: 5px;
+  flex-shrink: 0;
 }
 
 .pdf-preview {
@@ -443,7 +509,9 @@ button, input, textarea {
 .app.dark .stat-card,
 .app.dark .reset-button,
 .app.dark .pdf-preview,
-.app.dark .filter-chip {
+.app.dark .filter-chip,
+.app.dark .category-picker-label select,
+.app.dark .highlight-panel li {
   background: #0f172a;
   border-color: #334155;
   color: #e2e8f0;
@@ -461,7 +529,8 @@ button, input, textarea {
 .app.dark .book-item small,
 .app.dark .book-article p,
 .app.dark .stat-card span,
-.app.dark .book-progress {
+.app.dark .book-progress,
+.app.dark .export-message {
   color: #cbd5e1;
 }
 
@@ -481,7 +550,8 @@ button, input, textarea {
     border-bottom: 1px solid #e5e7eb;
   }
 
-  .reader-toolbar {
+  .reader-toolbar,
+  .top-actions {
     flex-direction: column;
     align-items: flex-start;
   }
