@@ -19,6 +19,7 @@ type Book = {
   note?: string;
   kind?: BookKind;
   pdfData?: ArrayBuffer;
+  currentChapter?: number;
 };
 
 const STORAGE_KEY = 'bookviewerpro-library';
@@ -64,6 +65,7 @@ const defaultBooks: Book[] = [
     bookmarks: ['c2'],
     note: 'A whimsical and imaginative work about curiosity and transformation.',
     kind: 'text',
+    currentChapter: 0,
   },
   {
     id: 'pride',
@@ -92,6 +94,7 @@ const defaultBooks: Book[] = [
     bookmarks: [],
     note: 'Classic social comedy focused on marriage, reputation, and personal perception.',
     kind: 'text',
+    currentChapter: 0,
   },
   {
     id: 'forest',
@@ -121,6 +124,7 @@ const defaultBooks: Book[] = [
     bookmarks: ['l1'],
     note: 'A poetic, philosophical story about innocence, imagination, and relationships.',
     kind: 'text',
+    currentChapter: 0,
   },
 ];
 
@@ -166,10 +170,6 @@ function App() {
     if (typeof window === 'undefined') return defaultBooks[0].id;
     return localStorage.getItem(SELECTED_BOOK_KEY) ?? defaultBooks[0].id;
   });
-  const [chapterIndex, setChapterIndex] = useState<number>(() => {
-    if (typeof window === 'undefined') return 0;
-    return Number(localStorage.getItem(CHAPTER_INDEX_KEY) ?? '0') || 0;
-  });
   const [fontSize, setFontSize] = useState<number>(() => {
     if (typeof window === 'undefined') return 18;
     return Number(localStorage.getItem('bookviewerpro-font-size') ?? '18') || 18;
@@ -179,6 +179,7 @@ function App() {
     return localStorage.getItem(THEME_KEY) === 'dark';
   });
   const [searchQuery, setSearchQuery] = useState('');
+  const [filter, setFilter] = useState<'all' | 'text' | 'pdf'>('all');
   const [pdfTextPages, setPdfTextPages] = useState<string[]>([]);
   const [pdfPageNumber, setPdfPageNumber] = useState(1);
   const pdfCanvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -187,6 +188,18 @@ function App() {
     () => books.find((book) => book.id === selectedBookId) ?? books[0],
     [books, selectedBookId]
   );
+
+  const filteredBooks = useMemo(() => {
+    if (filter === 'all') return books;
+    return books.filter((book) => (book.kind ?? 'text') === filter);
+  }, [books, filter]);
+
+  const chapterIndex = selectedBook?.currentChapter ?? 0;
+  const currentChapter = selectedBook.chapters[chapterIndex] ?? selectedBook.chapters[0];
+  const chapterCount = selectedBook.chapters.length;
+  const progress = chapterCount === 0 ? 0 : ((chapterIndex + 1) / chapterCount) * 100;
+  const bookmarked = selectedBook.bookmarks ?? [];
+  const isBookmarked = bookmarked.includes(currentChapter.id);
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(books));
@@ -197,10 +210,6 @@ function App() {
   }, [selectedBookId]);
 
   useEffect(() => {
-    localStorage.setItem(CHAPTER_INDEX_KEY, String(chapterIndex));
-  }, [chapterIndex]);
-
-  useEffect(() => {
     localStorage.setItem('bookviewerpro-font-size', String(fontSize));
   }, [fontSize]);
 
@@ -209,11 +218,27 @@ function App() {
   }, [darkMode]);
 
   useEffect(() => {
-    if (!selectedBook || selectedBook.chapters.length === 0) return;
-    if (chapterIndex >= selectedBook.chapters.length) {
-      setChapterIndex(selectedBook.chapters.length - 1);
+    const activeBook = books.find((book) => book.id === selectedBookId);
+    if (!activeBook) return;
+    if (activeBook.currentChapter == null) {
+      setBooks((oldBooks) =>
+        oldBooks.map((book) =>
+          book.id === selectedBookId ? { ...book, currentChapter: 0 } : book
+        )
+      );
     }
-  }, [selectedBook, chapterIndex]);
+  }, [books, selectedBookId]);
+
+  useEffect(() => {
+    if (!selectedBook || selectedBook.chapters.length === 0) return;
+    if ((selectedBook.currentChapter ?? 0) >= selectedBook.chapters.length) {
+      setBooks((oldBooks) =>
+        oldBooks.map((book) =>
+          book.id === selectedBook.id ? { ...book, currentChapter: book.chapters.length - 1 } : book
+        )
+      );
+    }
+  }, [selectedBook]);
 
   useEffect(() => {
     if (!selectedBook || selectedBook.kind !== 'pdf' || !selectedBook.pdfData) {
@@ -229,7 +254,6 @@ function App() {
       if (cancelled) return;
 
       const pages: string[] = [];
-
       for (let i = 1; i <= pdf.numPages; i += 1) {
         const page = await pdf.getPage(i);
         const content = await page.getTextContent();
@@ -282,24 +306,40 @@ function App() {
     };
   }, [selectedBook, pdfPageNumber]);
 
-  const currentChapter = selectedBook.chapters[chapterIndex] ?? selectedBook.chapters[0];
-  const chapterCount = selectedBook.chapters.length;
-  const progress = chapterCount === 0 ? 0 : ((chapterIndex + 1) / chapterCount) * 100;
-  const bookmarked = selectedBook.bookmarks ?? [];
-  const isBookmarked = bookmarked.includes(currentChapter.id);
-
   const filteredContent = searchQuery.trim()
     ? currentChapter.content.filter((paragraph) =>
         paragraph.toLowerCase().includes(searchQuery.trim().toLowerCase())
       )
     : currentChapter.content;
 
+  const handleBookSelection = (bookId: string) => {
+    setSelectedBookId(bookId);
+    const nextBook = books.find((book) => book.id === bookId);
+    if (nextBook) {
+      setSearchQuery('');
+      const nextIndex = nextBook.currentChapter ?? 0;
+      setBooks((oldBooks) =>
+        oldBooks.map((book) =>
+          book.id === bookId ? { ...book, currentChapter: nextIndex } : book
+        )
+      );
+    }
+  };
+
+  const handleChapterChange = (nextIndex: number) => {
+    setBooks((oldBooks) =>
+      oldBooks.map((book) =>
+        book.id === selectedBookId ? { ...book, currentChapter: nextIndex } : book
+      )
+    );
+  };
+
   const handleNextChapter = () => {
-    setChapterIndex((prev) => Math.min(prev + 1, Math.max(chapterCount - 1, 0)));
+    handleChapterChange(Math.min(chapterIndex + 1, Math.max(chapterCount - 1, 0)));
   };
 
   const handlePrevChapter = () => {
-    setChapterIndex((prev) => Math.max(prev - 1, 0));
+    handleChapterChange(Math.max(chapterIndex - 1, 0));
   };
 
   const handleBookmarkToggle = () => {
@@ -341,11 +381,11 @@ function App() {
         note: 'This PDF was imported from a local file.',
         kind: 'pdf',
         pdfData,
+        currentChapter: 0,
       };
 
       setBooks((oldBooks) => [newBook, ...oldBooks]);
       setSelectedBookId(newBook.id);
-      setChapterIndex(0);
       setSearchQuery('');
       event.target.value = '';
       return;
@@ -362,11 +402,11 @@ function App() {
       bookmarks: [],
       note: 'Imported from local file; continue reading from your newly added content.',
       kind: 'text',
+      currentChapter: 0,
     };
 
     setBooks((oldBooks) => [newBook, ...oldBooks]);
     setSelectedBookId(newBook.id);
-    setChapterIndex(0);
     setSearchQuery('');
     event.target.value = '';
   };
@@ -392,17 +432,16 @@ function App() {
       bookmarks: [],
       note: 'Personal writing workspace for your ideas and drafts.',
       kind: 'text',
+      currentChapter: 0,
     };
 
     setBooks((oldBooks) => [sample, ...oldBooks]);
     setSelectedBookId(sample.id);
-    setChapterIndex(0);
   };
 
   const handleResetLibrary = () => {
     setBooks(defaultBooks);
     setSelectedBookId(defaultBooks[0].id);
-    setChapterIndex(0);
     setSearchQuery('');
   };
 
@@ -427,6 +466,18 @@ function App() {
           </div>
         </div>
 
+        <div className="filter-row">
+          {(['all', 'text', 'pdf'] as const).map((option) => (
+            <button
+              key={option}
+              className={filter === option ? 'filter-chip active' : 'filter-chip'}
+              onClick={() => setFilter(option)}
+            >
+              {option === 'all' ? 'All' : option.toUpperCase()}
+            </button>
+          ))}
+        </div>
+
         <div className="search-box">
           <input
             type="text"
@@ -437,23 +488,26 @@ function App() {
         </div>
 
         <ul className="book-list">
-          {books.map((book) => (
-            <li
-              key={book.id}
-              className={book.id === selectedBook.id ? 'book-item active' : 'book-item'}
-              onClick={() => {
-                setSelectedBookId(book.id);
-                setChapterIndex(0);
-                setSearchQuery('');
-              }}
-            >
-              <span className="cover">{book.cover}</span>
-              <div>
-                <strong>{book.title}</strong>
-                <small>{book.author}</small>
-              </div>
-            </li>
-          ))}
+          {filteredBooks.map((book) => {
+            const bookProgress = Math.round(
+              (((book.currentChapter ?? 0) + 1) / Math.max(book.chapters.length, 1)) * 100
+            );
+
+            return (
+              <li
+                key={book.id}
+                className={book.id === selectedBook.id ? 'book-item active' : 'book-item'}
+                onClick={() => handleBookSelection(book.id)}
+              >
+                <span className="cover">{book.cover}</span>
+                <div className="book-meta">
+                  <strong>{book.title}</strong>
+                  <small>{book.author}</small>
+                  <span className="book-progress">{bookProgress}% read</span>
+                </div>
+              </li>
+            );
+          })}
         </ul>
 
         <button className="reset-button" onClick={handleResetLibrary}>Reset library</button>
@@ -504,7 +558,7 @@ function App() {
               <button
                 key={chapter.id}
                 className={index === chapterIndex ? 'chapter-pill active' : 'chapter-pill'}
-                onClick={() => setChapterIndex(index)}
+                onClick={() => handleChapterChange(index)}
               >
                 {chapter.title}
               </button>
