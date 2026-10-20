@@ -4,6 +4,7 @@ import { GlobalWorkerOptions, getDocument } from 'pdfjs-dist';
 
 type BookKind = 'text' | 'pdf' | 'epub';
 type BookCategory = 'Favorites' | 'Current' | 'Study' | 'Imported' | 'General';
+type BookTag = string;
 
 type Chapter = {
   id: string;
@@ -16,6 +17,12 @@ type Highlight = {
   text: string;
   chapterIndex: number;
   color: string;
+};
+
+type ReadingStats = {
+  readCount: number;
+  minutes: number;
+  lastOpenedAt?: number;
 };
 
 type Book = {
@@ -31,12 +38,15 @@ type Book = {
   pdfData?: ArrayBuffer;
   currentChapter?: number;
   category?: BookCategory;
+  tags?: BookTag[];
+  stats?: ReadingStats;
 };
 
 const STORAGE_KEY = 'bookviewerpro-library';
 const THEME_KEY = 'bookviewerpro-theme';
 const SELECTED_BOOK_KEY = 'bookviewerpro-selected-book';
 const CHAPTER_INDEX_KEY = 'bookviewerpro-chapter-index';
+const DEFAULT_COVER = '📚';
 
 const categoryOptions: BookCategory[] = ['Favorites', 'Current', 'Study', 'Imported', 'General'];
 
@@ -80,6 +90,8 @@ const defaultBooks: Book[] = [
     kind: 'text',
     currentChapter: 0,
     category: 'Favorites',
+    tags: ['Classic', 'Fantasy'],
+    stats: { readCount: 2, minutes: 30, lastOpenedAt: Date.now() - 1000 * 60 * 60 * 25 },
     highlights: [
       { id: 'h-alice-1', text: 'and what is the use of a book', chapterIndex: 0, color: '#fde68a' }
     ],
@@ -113,6 +125,8 @@ const defaultBooks: Book[] = [
     kind: 'text',
     currentChapter: 0,
     category: 'Current',
+    tags: ['Classic', 'Literature'],
+    stats: { readCount: 1, minutes: 18, lastOpenedAt: Date.now() - 1000 * 60 * 60 * 6 },
   },
   {
     id: 'forest',
@@ -144,6 +158,8 @@ const defaultBooks: Book[] = [
     kind: 'text',
     currentChapter: 0,
     category: 'Study',
+    tags: ['Philosophy', 'Classic'],
+    stats: { readCount: 3, minutes: 42, lastOpenedAt: Date.now() - 1000 * 60 * 60 * 24 * 2 },
   },
 ];
 
@@ -181,10 +197,6 @@ function getInitialBooks(): Book[] {
   } catch {
     return defaultBooks;
   }
-}
-
-function isXmlTextNode(node: Node | null | undefined) {
-  return !!node && node.nodeType === Node.TEXT_NODE;
 }
 
 async function parseEpubFile(arrayBuffer: ArrayBuffer): Promise<{ title: string; author: string; chapters: Chapter[] }> {
@@ -238,19 +250,20 @@ async function parseEpubFile(arrayBuffer: ArrayBuffer): Promise<{ title: string;
 
   for (let i = 0; i < preferredFiles.length; i += 1) {
     const item = preferredFiles[i];
-    const itemPath = opfEntry.name.includes('/')
-      ? `${opfEntry.name.split('/').slice(0, -1).join('/')}/${item.href}`
-      : item.href;
+    const basePath = opfEntry.name.includes('/') ? opfEntry.name.split('/').slice(0, -1).join('/') : '';
+    const itemPath = basePath ? `${basePath}/${item.href}` : item.href;
     const file = zip.file(itemPath) ?? zip.file(item.href) ?? null;
     if (!file) continue;
 
     const html = await file.async('string');
     const parsed = new DOMParser().parseFromString(html, 'text/html');
     const body = parsed.body || parsed.documentElement;
-		const selectedNodes = Array.from(body.querySelectorAll('p, h1, h2, h3, li, div, section')).map((el) => {
-      const text = (el.textContent || '').replace(/\s+/g, ' ').trim();
-      return text.length > 2 ? text : '';
-    }).filter(Boolean);
+    const selectedNodes = Array.from(body.querySelectorAll('p, h1, h2, h3, li, div, section'))
+      .map((el) => {
+        const text = (el.textContent || '').replace(/\s+/g, ' ').trim();
+        return text.length > 2 ? text : '';
+      })
+      .filter(Boolean);
 
     const textSegments = selectedNodes.length > 0
       ? selectedNodes
@@ -274,6 +287,15 @@ async function parseEpubFile(arrayBuffer: ArrayBuffer): Promise<{ title: string;
   return { title, author, chapters };
 }
 
+function formatDate(value?: number) {
+  if (!value) return 'Never';
+  return new Date(value).toLocaleDateString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  });
+}
+
 function App() {
   const [books, setBooks] = useState<Book[]>(getInitialBooks);
   const [selectedBookId, setSelectedBookId] = useState<string>(() => {
@@ -294,6 +316,8 @@ function App() {
   const [pdfTextPages, setPdfTextPages] = useState<string[]>([]);
   const [pdfPageNumber, setPdfPageNumber] = useState(1);
   const [exportMessage, setExportMessage] = useState('');
+  const [bookmarksVisible, setBookmarksVisible] = useState(false);
+  const [libraryView, setLibraryView] = useState<'grid' | 'list'>('grid');
   const pdfCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const articleRef = useRef<HTMLElement | null>(null);
 
@@ -323,6 +347,13 @@ function App() {
         paragraph.toLowerCase().includes(searchQuery.trim().toLowerCase())
       )
     : currentChapter.content;
+
+  const statsSummary = useMemo(() => {
+    const totalRead = books.filter((book) => Math.round((((book.currentChapter ?? 0) + 1) / Math.max(book.chapters.length, 1)) * 100) >= 80).length;
+    const totalMinutes = books.reduce((sum, book) => sum + (book.stats?.minutes ?? 0), 0);
+    const recent = [...books].sort((a, b) => (b.stats?.lastOpenedAt ?? 0) - (a.stats?.lastOpenedAt ?? 0))[0];
+    return { totalRead, totalMinutes, recent };
+  }, [books]);
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(books));
@@ -362,6 +393,24 @@ function App() {
       );
     }
   }, [selectedBook]);
+
+  useEffect(() => {
+    if (!selectedBook) return;
+    setBooks((oldBooks) =>
+      oldBooks.map((book) =>
+        book.id === selectedBook.id
+          ? {
+              ...book,
+              stats: {
+                readCount: book.stats?.readCount ?? 0,
+                minutes: book.stats?.minutes ?? 0,
+                lastOpenedAt: Date.now(),
+              },
+            }
+          : book
+      )
+    );
+  }, [selectedBookId]);
 
   useEffect(() => {
     if (!selectedBook || selectedBook.kind !== 'pdf' || !selectedBook.pdfData) {
@@ -497,6 +546,8 @@ function App() {
         pdfData,
         currentChapter: 0,
         category: 'Imported',
+        tags: ['Imported', 'PDF'],
+        stats: { readCount: 0, minutes: 0, lastOpenedAt: Date.now() },
       };
 
       setBooks((oldBooks) => [newBook, ...oldBooks]);
@@ -520,6 +571,8 @@ function App() {
         kind: 'epub',
         currentChapter: 0,
         category: 'Imported',
+        tags: ['Imported', 'EPUB'],
+        stats: { readCount: 0, minutes: 0, lastOpenedAt: Date.now() },
       };
 
       setBooks((oldBooks) => [newBook, ...oldBooks]);
@@ -542,6 +595,8 @@ function App() {
       kind: 'text',
       currentChapter: 0,
       category: 'Imported',
+      tags: ['Imported', 'Text'],
+      stats: { readCount: 0, minutes: 0, lastOpenedAt: Date.now() },
     };
 
     setBooks((oldBooks) => [newBook, ...oldBooks]);
@@ -573,6 +628,8 @@ function App() {
       kind: 'text',
       currentChapter: 0,
       category: 'General',
+      tags: ['Draft', 'Ideas'],
+      stats: { readCount: 0, minutes: 0, lastOpenedAt: Date.now() },
     };
 
     setBooks((oldBooks) => [sample, ...oldBooks]);
@@ -642,6 +699,39 @@ function App() {
     setExportMessage('Highlights exported successfully.');
   };
 
+  const handleExportLibrary = () => {
+    const payload = JSON.stringify(books, null, 2);
+    const blob = new Blob([payload], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'bookviewerpro-library.json';
+    link.click();
+    URL.revokeObjectURL(url);
+    setExportMessage('Library exported successfully.');
+  };
+
+  const handleImportLibrary = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    try {
+      const text = await file.text();
+      const parsed = JSON.parse(text) as Book[];
+      if (Array.isArray(parsed) && parsed.length) {
+        setBooks(parsed);
+        setSelectedBookId(parsed[0].id);
+        setExportMessage('Library imported successfully.');
+      } else {
+        setExportMessage('The imported file is not a valid library export.');
+      }
+    } catch {
+      setExportMessage('Failed to import library JSON.');
+    } finally {
+      event.target.value = '';
+    }
+  };
+
   const isPdfBook = selectedBook.kind === 'pdf';
   const isEpubBook = selectedBook.kind === 'epub';
   const currentPdfText = pdfTextPages[pdfPageNumber - 1] ?? 'PDF content is loading...';
@@ -688,6 +778,16 @@ function App() {
           ))}
         </div>
 
+        <div className="mini-toolbar">
+          <button className="secondary-button" onClick={() => setLibraryView('grid')}>Grid</button>
+          <button className="secondary-button" onClick={() => setLibraryView('list')}>List</button>
+          <button className="secondary-button" onClick={handleExportLibrary}>Export</button>
+          <label className="secondary-button import-label">
+            Import
+            <input type="file" accept="application/json" onChange={handleImportLibrary} />
+          </label>
+        </div>
+
         <div className="search-box">
           <input
             type="text"
@@ -697,7 +797,7 @@ function App() {
           />
         </div>
 
-        <ul className="book-list">
+        <ul className={libraryView === 'grid' ? 'book-list grid-view' : 'book-list list-view'}>
           {filteredBooks.map((book) => {
             const bookProgress = Math.round(
               (((book.currentChapter ?? 0) + 1) / Math.max(book.chapters.length, 1)) * 100
@@ -709,10 +809,11 @@ function App() {
                 className={book.id === selectedBook.id ? 'book-item active' : 'book-item'}
                 onClick={() => handleBookSelection(book.id)}
               >
-                <span className="cover">{book.cover}</span>
+                <span className="cover">{book.cover || DEFAULT_COVER}</span>
                 <div className="book-meta">
                   <strong>{book.title}</strong>
                   <small>{book.author}</small>
+                  <span className="book-tags">{(book.tags ?? []).slice(0, 2).join(' · ') || 'General'}</span>
                   <span className="book-progress">{bookProgress}% read</span>
                 </div>
               </li>
@@ -735,6 +836,7 @@ function App() {
             <button onClick={handleNextChapter} disabled={chapterIndex >= chapterCount - 1}>Next</button>
             <button onClick={handleBookmarkToggle}>{isBookmarked ? '★ Saved' : '☆ Save'}</button>
             <button onClick={handleExportHighlights}>Export</button>
+            <button onClick={() => setBookmarksVisible((value) => !value)}>{bookmarksVisible ? 'Hide Bookmarks' : 'Bookmarks'}</button>
             <button onClick={() => setDarkMode((prev) => !prev)}>
               {darkMode ? 'Light' : 'Dark'}
             </button>
@@ -757,6 +859,11 @@ function App() {
               ))}
             </select>
           </label>
+          <div className="stats-inline">
+            <span>Read: {statsSummary.totalRead}</span>
+            <span>Minutes: {statsSummary.totalMinutes}</span>
+            <span>Recent: {statsSummary.recent ? statsSummary.recent.title : 'None'}</span>
+          </div>
           {exportMessage ? <span className="export-message">{exportMessage}</span> : null}
         </div>
 
@@ -775,7 +882,29 @@ function App() {
           </div>
         </div>
 
-        {!isPdfBook && !isEpubBook && (
+        {bookmarksVisible && (
+          <div className="bookmark-panel">
+            <h4>Bookmarks</h4>
+            {selectedBook.bookmarks?.length ? (
+              <ul>
+                {selectedBook.bookmarks.map((bookmarkId) => {
+                  const chapter = selectedBook.chapters.find((item) => item.id === bookmarkId);
+                  return chapter ? (
+                    <li key={bookmarkId}>
+                      <button onClick={() => handleChapterChange(selectedBook.chapters.findIndex((item) => item.id === bookmarkId))}>
+                        {chapter.title}
+                      </button>
+                    </li>
+                  ) : null;
+                })}
+              </ul>
+            ) : (
+              <p>No bookmarks yet.</p>
+            )}
+          </div>
+        )}
+
+        {!isPdfBook && (
           <div className="chapter-strip">
             {selectedBook.chapters.map((chapter, index) => (
               <button
@@ -798,20 +927,6 @@ function App() {
             <button onClick={() => setPdfPageNumber((prev) => Math.min(prev + 1, Math.max(pdfTextPages.length, 1)))} disabled={pdfPageNumber >= Math.max(pdfTextPages.length, 1)}>
               Next Page
             </button>
-          </div>
-        )}
-
-        {isEpubBook && (
-          <div className="chapter-strip">
-            {selectedBook.chapters.map((chapter, index) => (
-              <button
-                key={chapter.id}
-                className={index === chapterIndex ? 'chapter-pill active' : 'chapter-pill'}
-                onClick={() => handleChapterChange(index)}
-              >
-                {chapter.title}
-              </button>
-            ))}
           </div>
         )}
 
@@ -879,6 +994,15 @@ function App() {
               ) : (
                 <p>Select text in the reading area to create a highlight.</p>
               )}
+            </div>
+
+            <div className="tag-panel">
+              <h5>Tags</h5>
+              <div className="tag-list">
+                {(selectedBook.tags ?? ['General']).map((tag) => (
+                  <span className="tag-pill" key={tag}>{tag}</span>
+                ))}
+              </div>
             </div>
           </aside>
         </div>

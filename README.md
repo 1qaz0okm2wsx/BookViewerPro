@@ -36,7 +36,7 @@ button, input, textarea, select {
 }
 
 .sidebar {
-  width: 330px;
+  width: 340px;
   border-right: 1px solid #e5e7eb;
   background: rgba(255, 255, 255, 0.9);
   backdrop-filter: blur(12px);
@@ -68,7 +68,9 @@ button, input, textarea, select {
 .link-button,
 .upload-button,
 .reset-button,
-.filter-chip {
+.filter-chip,
+.secondary-button,
+.import-label {
   border: none;
   cursor: pointer;
   transition: transform 0.15s ease;
@@ -77,7 +79,9 @@ button, input, textarea, select {
 .link-button:hover,
 .upload-button:hover,
 .reset-button:hover,
-.filter-chip:hover {
+.filter-chip:hover,
+.secondary-button:hover,
+.import-label:hover {
   transform: translateY(-1px);
 }
 
@@ -101,7 +105,8 @@ button, input, textarea, select {
   box-shadow: 0 10px 24px rgba(37, 99, 235, 0.2);
 }
 
-.upload-button input {
+.upload-button input,
+.import-label input {
   position: absolute;
   inset: 0;
   opacity: 0;
@@ -131,6 +136,26 @@ button, input, textarea, select {
   color: #1d4ed8;
 }
 
+.mini-toolbar {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.secondary-button,
+.import-label {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  background: #f1f5f9;
+  color: #0f172a;
+  padding: 8px 10px;
+  font-size: 0.8rem;
+}
+
 .search-box {
   margin-bottom: 18px;
 }
@@ -155,6 +180,12 @@ button, input, textarea, select {
   overflow: auto;
 }
 
+.book-list.grid-view {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
 .book-item {
   display: flex;
   align-items: center;
@@ -167,6 +198,11 @@ button, input, textarea, select {
   transition: all 0.2s ease;
 }
 
+.grid-view .book-item {
+  flex-direction: column;
+  align-items: flex-start;
+}
+
 .book-item:hover,
 .book-item.active {
   background: #dbeafe;
@@ -174,29 +210,44 @@ button, input, textarea, select {
 }
 
 .book-item .cover {
-  width: 42px;
-  height: 42px;
+  width: 52px;
+  height: 52px;
   display: grid;
   place-items: center;
-  background: white;
-  border-radius: 12px;
-  font-size: 1.5rem;
+  background: linear-gradient(135deg, #e0f2fe, #fef3c7);
+  border-radius: 14px;
+  font-size: 1.7rem;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.4);
+}
+
+.grid-view .cover {
+  width: 100%;
+  height: 84px;
+  font-size: 2.2rem;
 }
 
 .book-meta {
   display: flex;
   flex-direction: column;
   gap: 2px;
+  min-width: 0;
 }
 
 .book-meta strong,
 .book-meta small,
-.book-progress {
+.book-progress,
+.book-tags {
   display: block;
 }
 
 .book-meta small {
   color: #6b7280;
+}
+
+.book-tags {
+  font-size: 0.7rem;
+  color: #2563eb;
+  font-weight: 600;
 }
 
 .book-progress {
@@ -267,6 +318,7 @@ button, input, textarea, select {
   align-items: center;
   gap: 16px;
   margin: 18px 0 12px;
+  flex-wrap: wrap;
 }
 
 .category-picker-label {
@@ -281,6 +333,15 @@ button, input, textarea, select {
   border-radius: 10px;
   background: #f8fafc;
   padding: 8px 10px;
+}
+
+.stats-inline {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-size: 0.82rem;
+  color: #475569;
 }
 
 .export-message {
@@ -313,6 +374,36 @@ button, input, textarea, select {
 
 .stat-card strong {
   font-size: 1.5rem;
+}
+
+.bookmark-panel {
+  background: rgba(255,255,255,0.7);
+  border: 1px solid #e5e7eb;
+  border-radius: 16px;
+  padding: 16px;
+  margin-bottom: 14px;
+}
+
+.bookmark-panel h4 {
+  margin: 0 0 10px;
+}
+
+.bookmark-panel ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.bookmark-panel li button {
+  background: #eff6ff;
+  color: #1d4ed8;
+  border: none;
+  border-radius: 999px;
+  padding: 8px 12px;
+  cursor: pointer;
 }
 
 .chapter-strip {
@@ -428,7 +519,8 @@ button, input, textarea, select {
 }
 
 .note-panel h4,
-.highlight-panel h5 {
+.highlight-panel h5,
+.tag-panel h5 {
   margin: 0 0 12px;
   font-size: 1.1rem;
 }
@@ -445,7 +537,8 @@ button, input, textarea, select {
   outline: none;
 }
 
-.highlight-panel {
+.highlight-panel,
+.tag-panel {
   margin-top: 18px;
 }
 
@@ -476,6 +569,24 @@ button, input, textarea, select {
   display: inline-block;
   margin-top: 5px;
   flex-shrink: 0;
+}
+
+.tag-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.tag-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: #e0e7ff;
+  color: #3730a3;
+  padding: 6px 10px;
+  font-size: 0.75rem;
+  font-weight: 600;
 }
 
 .pdf-preview {
@@ -511,7 +622,11 @@ button, input, textarea, select {
 .app.dark .pdf-preview,
 .app.dark .filter-chip,
 .app.dark .category-picker-label select,
-.app.dark .highlight-panel li {
+.app.dark .secondary-button,
+.app.dark .import-label,
+.app.dark .bookmark-panel,
+.app.dark .highlight-panel li,
+.app.dark .tag-pill {
   background: #0f172a;
   border-color: #334155;
   color: #e2e8f0;
@@ -520,7 +635,8 @@ button, input, textarea, select {
 .app.dark .book-item,
 .app.dark .progress-bar,
 .app.dark .note-panel textarea,
-.app.dark .pdf-preview canvas {
+.app.dark .pdf-preview canvas,
+.app.dark .bookmark-panel li button {
   background: #111827;
   color: #e2e8f0;
 }
@@ -530,11 +646,13 @@ button, input, textarea, select {
 .app.dark .book-article p,
 .app.dark .stat-card span,
 .app.dark .book-progress,
-.app.dark .export-message {
+.app.dark .export-message,
+.app.dark .stats-inline {
   color: #cbd5e1;
 }
 
-.app.dark .article-header span {
+.app.dark .article-header span,
+.app.dark .book-tags {
   background: rgba(59, 130, 246, 0.18);
   color: #bfdbfe;
 }
