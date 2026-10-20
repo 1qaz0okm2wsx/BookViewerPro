@@ -13,9 +13,15 @@ type Book = {
   cover: string;
   chapters: Chapter[];
   bookmarks?: string[];
+  note?: string;
 };
 
-const sampleBooks: Book[] = [
+const STORAGE_KEY = 'bookviewerpro-library';
+const THEME_KEY = 'bookviewerpro-theme';
+const SELECTED_BOOK_KEY = 'bookviewerpro-selected-book';
+const CHAPTER_INDEX_KEY = 'bookviewerpro-chapter-index';
+
+const defaultBooks: Book[] = [
   {
     id: 'alice',
     title: 'Alice in Wonderland',
@@ -48,9 +54,10 @@ const sampleBooks: Book[] = [
           'The Mouse gave a little squeak, and went on: “I know what you are thinking about,” said the Mouse, as if it had the right to know everything; “and it’s not fair to ask me to tell you all this without telling me why you speak to me in such a way.”',
           'Alice looked at the Mouse, who was still speaking, and thought it very strange that all these creatures were so anxious to hear her speak.'
         ],
-      }
+      },
     ],
     bookmarks: ['c2'],
+    note: 'A whimsical and imaginative work about curiosity and transformation.',
   },
   {
     id: 'pride',
@@ -74,9 +81,10 @@ const sampleBooks: Book[] = [
           'Mr. Bennet replied that he had not.',
           '“But it is,” returned she; “for Mrs. Long has just been here, and she told me all about it.”'
         ],
-      }
+      },
     ],
     bookmarks: [],
+    note: 'Classic social comedy focused on marriage, reputation, and personal perception.',
   },
   {
     id: 'forest',
@@ -101,43 +109,62 @@ const sampleBooks: Book[] = [
           'Which has generally been depressing, and I don’t know why.',
           'But at least it has put me in a way of thinking that seems clear to me.'
         ],
-      }
+      },
     ],
     bookmarks: ['l1'],
-  }
+    note: 'A poetic, philosophical story about innocence, imagination, and relationships.',
+  },
 ];
 
-const STORAGE_KEY = 'bookviewerpro-library';
-const THEME_KEY = 'bookviewerpro-theme';
+function splitImportedTextToChapters(rawText: string, title: string): Chapter[] {
+  const paragraphs = rawText
+    .replace(/\r/g, '')
+    .split(/\n\s*\n+/)
+    .map((block) => block.trim())
+    .filter(Boolean);
 
-function getInitialBooks(): Book[] {
-  if (typeof window === 'undefined') {
-    return sampleBooks;
+  if (!paragraphs.length) {
+    return [{ id: 'chapter-1', title: 'Imported Text', content: ['Your imported file is empty.'] }];
   }
 
+  const maxChapters = 4;
+  const targetChunks = Math.min(maxChapters, Math.max(1, Math.ceil(paragraphs.length / 4)));
+  const chunkSize = Math.ceil(paragraphs.length / targetChunks);
+
+  return Array.from({ length: targetChunks }, (_, index) => {
+    const segment = paragraphs.slice(index * chunkSize, (index + 1) * chunkSize);
+    return {
+      id: `chapter-${index + 1}`,
+      title: `Chapter ${index + 1}`,
+      content: segment.length ? segment : ['No text found in this section.'],
+    };
+  });
+}
+
+function getInitialBooks(): Book[] {
+  if (typeof window === 'undefined') return defaultBooks;
+
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    return raw ? (JSON.parse(raw) as Book[]) : sampleBooks;
+    const saved = localStorage.getItem(STORAGE_KEY);
+    return saved ? (JSON.parse(saved) as Book[]) : defaultBooks;
   } catch {
-    return sampleBooks;
+    return defaultBooks;
   }
 }
 
 function App() {
   const [books, setBooks] = useState<Book[]>(getInitialBooks);
   const [selectedBookId, setSelectedBookId] = useState<string>(() => {
-    if (typeof window === 'undefined') return sampleBooks[0].id;
-    return localStorage.getItem('bookviewerpro-selected-book') ?? sampleBooks[0].id;
+    if (typeof window === 'undefined') return defaultBooks[0].id;
+    return localStorage.getItem(SELECTED_BOOK_KEY) ?? defaultBooks[0].id;
   });
   const [chapterIndex, setChapterIndex] = useState<number>(() => {
     if (typeof window === 'undefined') return 0;
-    const saved = Number(localStorage.getItem('bookviewerpro-chapter-index') ?? '0');
-    return Number.isFinite(saved) ? saved : 0;
+    return Number(localStorage.getItem(CHAPTER_INDEX_KEY) ?? '0') || 0;
   });
   const [fontSize, setFontSize] = useState<number>(() => {
     if (typeof window === 'undefined') return 18;
-    const saved = Number(localStorage.getItem('bookviewerpro-font-size') ?? '18');
-    return Number.isFinite(saved) ? saved : 18;
+    return Number(localStorage.getItem('bookviewerpro-font-size') ?? '18') || 18;
   });
   const [darkMode, setDarkMode] = useState<boolean>(() => {
     if (typeof window === 'undefined') return false;
@@ -150,21 +177,16 @@ function App() {
     [books, selectedBookId]
   );
 
-  const currentChapter = selectedBook.chapters[chapterIndex] ?? selectedBook.chapters[0];
-  const chapterCount = selectedBook.chapters.length;
-  const progress = chapterCount === 0 ? 0 : ((chapterIndex + 1) / chapterCount) * 100;
-  const isBookmarked = (selectedBook.bookmarks ?? []).includes(currentChapter.id);
-
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(books));
   }, [books]);
 
   useEffect(() => {
-    localStorage.setItem('bookviewerpro-selected-book', selectedBookId);
+    localStorage.setItem(SELECTED_BOOK_KEY, selectedBookId);
   }, [selectedBookId]);
 
   useEffect(() => {
-    localStorage.setItem('bookviewerpro-chapter-index', String(chapterIndex));
+    localStorage.setItem(CHAPTER_INDEX_KEY, String(chapterIndex));
   }, [chapterIndex]);
 
   useEffect(() => {
@@ -182,8 +204,20 @@ function App() {
     }
   }, [selectedBook, chapterIndex]);
 
+  const currentChapter = selectedBook.chapters[chapterIndex] ?? selectedBook.chapters[0];
+  const chapterCount = selectedBook.chapters.length;
+  const progress = chapterCount === 0 ? 0 : ((chapterIndex + 1) / chapterCount) * 100;
+  const bookmarked = selectedBook.bookmarks ?? [];
+  const isBookmarked = bookmarked.includes(currentChapter.id);
+
+  const filteredContent = searchQuery.trim()
+    ? currentChapter.content.filter((paragraph) =>
+        paragraph.toLowerCase().includes(searchQuery.trim().toLowerCase())
+      )
+    : currentChapter.content;
+
   const handleNextChapter = () => {
-    setChapterIndex((prev) => Math.min(prev + 1, Math.max(selectedBook.chapters.length - 1, 0)));
+    setChapterIndex((prev) => Math.min(prev + 1, Math.max(chapterCount - 1, 0)));
   };
 
   const handlePrevChapter = () => {
@@ -191,19 +225,25 @@ function App() {
   };
 
   const handleBookmarkToggle = () => {
-    setBooks((prevBooks) =>
-      prevBooks.map((book) => {
+    setBooks((oldBooks) =>
+      oldBooks.map((book) => {
         if (book.id !== selectedBookId) return book;
         const existing = book.bookmarks ?? [];
-        const alreadySaved = existing.includes(currentChapter.id);
+        const already = existing.includes(currentChapter.id);
 
         return {
           ...book,
-          bookmarks: alreadySaved
+          bookmarks: already
             ? existing.filter((id) => id !== currentChapter.id)
             : [...existing, currentChapter.id],
         };
       })
+    );
+  };
+
+  const handleNoteChange = (value: string) => {
+    setBooks((oldBooks) =>
+      oldBooks.map((book) => (book.id === selectedBookId ? { ...book, note: value } : book))
     );
   };
 
@@ -212,38 +252,57 @@ function App() {
     if (!file) return;
 
     const text = await file.text();
-    const sanitized = text
-      .replace(/\r/g, '')
-      .split(/\n\s*\n/)
-      .map((block) => block.trim())
-      .filter(Boolean);
-
+    const title = file.name.replace(/\.[^/.]+$/, '') || 'Imported Book';
     const newBook: Book = {
       id: `${file.name}-${Date.now()}`,
-      title: file.name.replace(/\.[^/.]+$/, ''),
+      title,
       author: 'Imported',
-      cover: '📄',
-      chapters: [
-        {
-          id: 'imported-chapter',
-          title: 'Imported Text',
-          content: sanitized.length > 0 ? sanitized : ['Your imported file is empty.'],
-        },
-      ],
+      cover: '📚',
+      chapters: splitImportedTextToChapters(text, title),
       bookmarks: [],
+      note: 'Imported from local file; continue reading from your newly added content.',
     };
 
-    setBooks((prev) => [newBook, ...prev]);
+    setBooks((oldBooks) => [newBook, ...oldBooks]);
     setSelectedBookId(newBook.id);
     setChapterIndex(0);
+    setSearchQuery('');
     event.target.value = '';
   };
 
-  const filteredContent = searchQuery.trim()
-    ? currentChapter.content.filter((paragraph) =>
-        paragraph.toLowerCase().includes(searchQuery.trim().toLowerCase())
-      )
-    : currentChapter.content;
+  const handleAddSample = () => {
+    const duplicateId = `custom-${Date.now()}`;
+    const sample: Book = {
+      id: duplicateId,
+      title: 'New Reading Draft',
+      author: 'You',
+      cover: '✍️',
+      chapters: [
+        {
+          id: 'draft-chapter-1',
+          title: 'Draft Chapter',
+          content: [
+            'This is a personal draft book for notes, ideas, and writing projects.',
+            'You can use it as a place to collect concepts, outlines, or quick reading notes.',
+            'Keep adding paragraphs and revisit the chapter anytime from your library.'
+          ],
+        },
+      ],
+      bookmarks: [],
+      note: 'Personal writing workspace for your ideas and drafts.',
+    };
+
+    setBooks((oldBooks) => [sample, ...oldBooks]);
+    setSelectedBookId(sample.id);
+    setChapterIndex(0);
+  };
+
+  const handleResetLibrary = () => {
+    setBooks(defaultBooks);
+    setSelectedBookId(defaultBooks[0].id);
+    setChapterIndex(0);
+    setSearchQuery('');
+  };
 
   return (
     <div className={darkMode ? 'app dark' : 'app'}>
@@ -254,10 +313,13 @@ function App() {
 
         <div className="library-header">
           <span>My Library</span>
-          <label className="upload-button">
-            Add File
-            <input type="file" accept=".txt,.md" onChange={handleLoadFile} />
-          </label>
+          <div className="mini-actions">
+            <button className="link-button" onClick={handleAddSample}>New</button>
+            <label className="upload-button">
+              Add File
+              <input type="file" accept=".txt,.md" onChange={handleLoadFile} />
+            </label>
+          </div>
         </div>
 
         <div className="search-box">
@@ -288,6 +350,8 @@ function App() {
             </li>
           ))}
         </ul>
+
+        <button className="reset-button" onClick={handleResetLibrary}>Reset library</button>
       </aside>
 
       <main className="reader-panel">
@@ -314,6 +378,21 @@ function App() {
           </div>
         </header>
 
+        <div className="stats-grid">
+          <div className="stat-card">
+            <span>Chapters</span>
+            <strong>{chapterCount}</strong>
+          </div>
+          <div className="stat-card">
+            <span>Bookmarks</span>
+            <strong>{bookmarked.length}</strong>
+          </div>
+          <div className="stat-card">
+            <span>Progress</span>
+            <strong>{Math.round(progress)}%</strong>
+          </div>
+        </div>
+
         <div className="chapter-strip">
           {selectedBook.chapters.map((chapter, index) => (
             <button
@@ -333,18 +412,31 @@ function App() {
           <span>{Math.round(progress)}%</span>
         </div>
 
-        <article className="book-article" style={{ fontSize: `${fontSize}px` }}>
-          <div className="article-header">
-            <h3>{currentChapter.title}</h3>
-            <span>{selectedBook.bookmarks?.includes(currentChapter.id) ? 'Bookmarked' : 'Reading'}</span>
-          </div>
+        <div className="content-grid">
+          <article className="book-article" style={{ fontSize: `${fontSize}px` }}>
+            <div className="article-header">
+              <h3>{currentChapter.title}</h3>
+              <span>{selectedBook.bookmarks?.includes(currentChapter.id) ? 'Bookmarked' : 'Reading'}</span>
+            </div>
 
-          {filteredContent.length > 0 ? (
-            filteredContent.map((paragraph, index) => <p key={`${currentChapter.id}-${index}`}>{paragraph}</p>)
-          ) : (
-            <p>No matching content for “{searchQuery}”.</p>
-          )}
-        </article>
+            {filteredContent.length > 0 ? (
+              filteredContent.map((paragraph, index) => (
+                <p key={`${currentChapter.id}-${index}`}>{paragraph}</p>
+              ))
+            ) : (
+              <p>No matching content for “{searchQuery}”.</p>
+            )}
+          </article>
+
+          <aside className="note-panel">
+            <h4>Book note</h4>
+            <textarea
+              value={selectedBook.note ?? ''}
+              onChange={(event) => handleNoteChange(event.target.value)}
+              placeholder="Write your personal thoughts about this book..."
+            />
+          </aside>
+        </div>
       </main>
     </div>
   );

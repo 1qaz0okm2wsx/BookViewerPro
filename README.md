@@ -12,15 +12,15 @@
 
 html, body, #root {
   margin: 0;
-  height: 100%;
   min-height: 100%;
+  height: 100%;
 }
 
 body {
   min-height: 100vh;
 }
 
-button, input {
+button, input, textarea {
   font: inherit;
 }
 
@@ -36,11 +36,13 @@ button, input {
 }
 
 .sidebar {
-  width: 320px;
+  width: 330px;
   border-right: 1px solid #e5e7eb;
   background: rgba(255, 255, 255, 0.9);
   backdrop-filter: blur(12px);
   padding: 24px 18px;
+  display: flex;
+  flex-direction: column;
 }
 
 .brand-row h1 {
@@ -57,6 +59,33 @@ button, input {
   font-weight: 600;
 }
 
+.mini-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.link-button,
+.upload-button,
+.reset-button {
+  border: none;
+  cursor: pointer;
+  transition: transform 0.15s ease;
+}
+
+.link-button:hover,
+.upload-button:hover,
+.reset-button:hover {
+  transform: translateY(-1px);
+}
+
+.link-button {
+  background: #e2e8f0;
+  color: #0f172a;
+  padding: 8px 10px;
+  border-radius: 8px;
+}
+
 .upload-button {
   position: relative;
   display: inline-flex;
@@ -66,7 +95,6 @@ button, input {
   border-radius: 10px;
   background: linear-gradient(135deg, #2563eb, #3b82f6);
   color: white;
-  cursor: pointer;
   font-size: 0.8rem;
   box-shadow: 0 10px 24px rgba(37, 99, 235, 0.2);
 }
@@ -98,6 +126,8 @@ button, input {
   display: flex;
   flex-direction: column;
   gap: 12px;
+  flex: 1;
+  overflow: auto;
 }
 
 .book-item {
@@ -135,6 +165,14 @@ button, input {
 
 .book-item small {
   color: #6b7280;
+}
+
+.reset-button {
+  margin-top: 16px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: #f1f5f9;
+  color: #0f172a;
 }
 
 .reader-panel {
@@ -185,11 +223,37 @@ button, input {
   cursor: not-allowed;
 }
 
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(120px, 1fr));
+  gap: 14px;
+  margin: 20px 0;
+}
+
+.stat-card {
+  background: rgba(255, 255, 255, 0.7);
+  border: 1px solid #e2e8f0;
+  border-radius: 16px;
+  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.stat-card span {
+  color: #475569;
+  font-size: 0.82rem;
+}
+
+.stat-card strong {
+  font-size: 1.5rem;
+}
+
 .chapter-strip {
   display: flex;
   gap: 8px;
   overflow-x: auto;
-  padding: 18px 0 14px;
+  padding: 8px 0 14px;
 }
 
 .chapter-pill {
@@ -230,12 +294,18 @@ button, input {
   border-radius: inherit;
 }
 
+.content-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 2.2fr) minmax(260px, 0.8fr);
+  gap: 18px;
+}
+
 .book-article {
   background: rgba(255, 255, 255, 0.85);
   border: 1px solid #e2e8f0;
   border-radius: 18px;
   padding: 28px;
-  max-width: 1100px;
+  min-height: 420px;
   box-shadow: 0 12px 30px rgba(15, 23, 42, 0.06);
 }
 
@@ -267,6 +337,31 @@ button, input {
   color: #1f2937;
 }
 
+.note-panel {
+  background: rgba(255, 255, 255, 0.8);
+  border: 1px solid #e2e8f0;
+  border-radius: 18px;
+  padding: 18px;
+  min-height: 420px;
+}
+
+.note-panel h4 {
+  margin: 0 0 12px;
+  font-size: 1.1rem;
+}
+
+.note-panel textarea {
+  width: 100%;
+  min-height: 330px;
+  resize: vertical;
+  border: 1px solid #dbe1ea;
+  border-radius: 12px;
+  background: #f8fafc;
+  color: inherit;
+  padding: 12px;
+  outline: none;
+}
+
 .app.dark {
   background: linear-gradient(180deg, #020817 0%, #0f172a 100%);
   color: #e2e8f0;
@@ -276,21 +371,26 @@ button, input {
 .app.dark .book-article,
 .app.dark .chapter-pill,
 .app.dark .controls button,
-.app.dark .search-box input {
+.app.dark .search-box input,
+.app.dark .note-panel,
+.app.dark .stat-card,
+.app.dark .reset-button {
   background: #0f172a;
   border-color: #334155;
   color: #e2e8f0;
 }
 
 .app.dark .book-item,
-.app.dark .progress-bar {
+.app.dark .progress-bar,
+.app.dark .note-panel textarea {
   background: #111827;
   color: #e2e8f0;
 }
 
 .app.dark .reader-toolbar p,
 .app.dark .book-item small,
-.app.dark .book-article p {
+.app.dark .book-article p,
+.app.dark .stat-card span {
   color: #cbd5e1;
 }
 
@@ -315,7 +415,12 @@ button, input {
     align-items: flex-start;
   }
 
-  .book-article {
-    padding: 20px 16px;
+  .content-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .book-article,
+  .note-panel {
+    min-height: 0;
   }
 }
