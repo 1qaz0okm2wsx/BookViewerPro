@@ -1,4 +1,7 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { GlobalWorkerOptions, getDocument } from 'pdfjs-dist';
+
+type BookKind = 'text' | 'pdf';
 
 type Chapter = {
   id: string;
@@ -14,6 +17,8 @@ type Book = {
   chapters: Chapter[];
   bookmarks?: string[];
   note?: string;
+  kind?: BookKind;
+  pdfData?: ArrayBuffer;
 };
 
 const STORAGE_KEY = 'bookviewerpro-library';
@@ -58,6 +63,7 @@ const defaultBooks: Book[] = [
     ],
     bookmarks: ['c2'],
     note: 'A whimsical and imaginative work about curiosity and transformation.',
+    kind: 'text',
   },
   {
     id: 'pride',
@@ -85,6 +91,7 @@ const defaultBooks: Book[] = [
     ],
     bookmarks: [],
     note: 'Classic social comedy focused on marriage, reputation, and personal perception.',
+    kind: 'text',
   },
   {
     id: 'forest',
@@ -113,10 +120,11 @@ const defaultBooks: Book[] = [
     ],
     bookmarks: ['l1'],
     note: 'A poetic, philosophical story about innocence, imagination, and relationships.',
+    kind: 'text',
   },
 ];
 
-function splitImportedTextToChapters(rawText: string, title: string): Chapter[] {
+function splitImportedTextToChapters(rawText: string): Chapter[] {
   const paragraphs = rawText
     .replace(/\r/g, '')
     .split(/\n\s*\n+/)
@@ -171,6 +179,9 @@ function App() {
     return localStorage.getItem(THEME_KEY) === 'dark';
   });
   const [searchQuery, setSearchQuery] = useState('');
+  const [pdfTextPages, setPdfTextPages] = useState<string[]>([]);
+  const [pdfPageNumber, setPdfPageNumber] = useState(1);
+  const pdfCanvasRef = useRef<HTMLCanvasElement | null>(null);
 
   const selectedBook = useMemo(
     () => books.find((book) => book.id === selectedBookId) ?? books[0],
@@ -203,6 +214,73 @@ function App() {
       setChapterIndex(selectedBook.chapters.length - 1);
     }
   }, [selectedBook, chapterIndex]);
+
+  useEffect(() => {
+    if (!selectedBook || selectedBook.kind !== 'pdf' || !selectedBook.pdfData) {
+      setPdfTextPages([]);
+      return;
+    }
+
+    let cancelled = false;
+
+    const loadPdf = async () => {
+      GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/build/pdf.worker.min.mjs', import.meta.url).toString();
+      const pdf = await getDocument({ data: selectedBook.pdfData }).promise;
+      if (cancelled) return;
+
+      const pages: string[] = [];
+
+      for (let i = 1; i <= pdf.numPages; i += 1) {
+        const page = await pdf.getPage(i);
+        const content = await page.getTextContent();
+        const text = content.items
+          .map((item) => ('str' in item ? item.str : ''))
+          .join(' ')
+          .replace(/\s+/g, ' ')
+          .trim();
+        pages.push(text || 'No readable text on this page.');
+      }
+
+      setPdfTextPages(pages);
+      setPdfPageNumber(1);
+    };
+
+    loadPdf().catch(() => {
+      setPdfTextPages(['Unable to read this PDF file.']);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedBook]);
+
+  useEffect(() => {
+    if (!selectedBook || selectedBook.kind !== 'pdf' || !selectedBook.pdfData) return;
+
+    let cancelled = false;
+
+    const renderPage = async () => {
+      if (!pdfCanvasRef.current) return;
+      GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/build/pdf.worker.min.mjs', import.meta.url).toString();
+      const pdf = await getDocument({ data: selectedBook.pdfData }).promise;
+      if (cancelled) return;
+      const page = await pdf.getPage(pdfPageNumber);
+      const viewport = page.getViewport({ scale: 1.2 });
+      const canvas = pdfCanvasRef.current;
+      const context = canvas.getContext('2d');
+      if (!context) return;
+
+      canvas.width = viewport.width;
+      canvas.height = viewport.height;
+      await page.render({ canvasContext: context, viewport }).promise;
+    };
+
+    renderPage();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedBook, pdfPageNumber]);
 
   const currentChapter = selectedBook.chapters[chapterIndex] ?? selectedBook.chapters[0];
   const chapterCount = selectedBook.chapters.length;
@@ -251,6 +329,28 @@ function App() {
     const file = event.target.files?.[0];
     if (!file) return;
 
+    if (file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')) {
+      const pdfData = await file.arrayBuffer();
+      const newBook: Book = {
+        id: `${file.name}-${Date.now()}`,
+        title: file.name.replace(/\.[^/.]+$/, '') || 'Imported PDF',
+        author: 'Imported',
+        cover: '📄',
+        chapters: [{ id: 'pdf-page-1', title: 'PDF Preview', content: ['PDF content will be extracted and displayed here.'] }],
+        bookmarks: [],
+        note: 'This PDF was imported from a local file.',
+        kind: 'pdf',
+        pdfData,
+      };
+
+      setBooks((oldBooks) => [newBook, ...oldBooks]);
+      setSelectedBookId(newBook.id);
+      setChapterIndex(0);
+      setSearchQuery('');
+      event.target.value = '';
+      return;
+    }
+
     const text = await file.text();
     const title = file.name.replace(/\.[^/.]+$/, '') || 'Imported Book';
     const newBook: Book = {
@@ -258,9 +358,10 @@ function App() {
       title,
       author: 'Imported',
       cover: '📚',
-      chapters: splitImportedTextToChapters(text, title),
+      chapters: splitImportedTextToChapters(text),
       bookmarks: [],
       note: 'Imported from local file; continue reading from your newly added content.',
+      kind: 'text',
     };
 
     setBooks((oldBooks) => [newBook, ...oldBooks]);
@@ -290,6 +391,7 @@ function App() {
       ],
       bookmarks: [],
       note: 'Personal writing workspace for your ideas and drafts.',
+      kind: 'text',
     };
 
     setBooks((oldBooks) => [sample, ...oldBooks]);
@@ -304,6 +406,9 @@ function App() {
     setSearchQuery('');
   };
 
+  const isPdfBook = selectedBook.kind === 'pdf';
+  const currentPdfText = pdfTextPages[pdfPageNumber - 1] ?? 'PDF content is loading...';
+
   return (
     <div className={darkMode ? 'app dark' : 'app'}>
       <aside className="sidebar">
@@ -317,7 +422,7 @@ function App() {
             <button className="link-button" onClick={handleAddSample}>New</button>
             <label className="upload-button">
               Add File
-              <input type="file" accept=".txt,.md" onChange={handleLoadFile} />
+              <input type="file" accept=".txt,.md,.pdf" onChange={handleLoadFile} />
             </label>
           </div>
         </div>
@@ -393,17 +498,31 @@ function App() {
           </div>
         </div>
 
-        <div className="chapter-strip">
-          {selectedBook.chapters.map((chapter, index) => (
-            <button
-              key={chapter.id}
-              className={index === chapterIndex ? 'chapter-pill active' : 'chapter-pill'}
-              onClick={() => setChapterIndex(index)}
-            >
-              {chapter.title}
+        {!isPdfBook && (
+          <div className="chapter-strip">
+            {selectedBook.chapters.map((chapter, index) => (
+              <button
+                key={chapter.id}
+                className={index === chapterIndex ? 'chapter-pill active' : 'chapter-pill'}
+                onClick={() => setChapterIndex(index)}
+              >
+                {chapter.title}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {isPdfBook && (
+          <div className="pdf-controls">
+            <button onClick={() => setPdfPageNumber((prev) => Math.max(prev - 1, 1))} disabled={pdfPageNumber === 1}>
+              Previous Page
             </button>
-          ))}
-        </div>
+            <span>Page {pdfPageNumber}</span>
+            <button onClick={() => setPdfPageNumber((prev) => Math.min(prev + 1, Math.max(pdfTextPages.length, 1)))} disabled={pdfPageNumber >= Math.max(pdfTextPages.length, 1)}>
+              Next Page
+            </button>
+          </div>
+        )}
 
         <div className="progress-wrap">
           <div className="progress-bar">
@@ -414,17 +533,31 @@ function App() {
 
         <div className="content-grid">
           <article className="book-article" style={{ fontSize: `${fontSize}px` }}>
-            <div className="article-header">
-              <h3>{currentChapter.title}</h3>
-              <span>{selectedBook.bookmarks?.includes(currentChapter.id) ? 'Bookmarked' : 'Reading'}</span>
-            </div>
-
-            {filteredContent.length > 0 ? (
-              filteredContent.map((paragraph, index) => (
-                <p key={`${currentChapter.id}-${index}`}>{paragraph}</p>
-              ))
+            {isPdfBook ? (
+              <>
+                <div className="pdf-preview">
+                  <canvas ref={pdfCanvasRef} />
+                </div>
+                <div className="article-header">
+                  <h3>PDF page {pdfPageNumber}</h3>
+                  <span>PDF</span>
+                </div>
+                <p>{currentPdfText}</p>
+              </>
             ) : (
-              <p>No matching content for “{searchQuery}”.</p>
+              <>
+                <div className="article-header">
+                  <h3>{currentChapter.title}</h3>
+                  <span>{selectedBook.bookmarks?.includes(currentChapter.id) ? 'Bookmarked' : 'Reading'}</span>
+                </div>
+                {filteredContent.length > 0 ? (
+                  filteredContent.map((paragraph, index) => (
+                    <p key={`${currentChapter.id}-${index}`}>{paragraph}</p>
+                  ))
+                ) : (
+                  <p>No matching content for “{searchQuery}”.</p>
+                )}
+              </>
             )}
           </article>
 
